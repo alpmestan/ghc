@@ -76,6 +76,7 @@ import Linker
 import Maybes ( orElse, expectJust )
 import NameSet
 import Panic hiding ( showException )
+import Type ( expandTypeSynonyms )
 import Util
 import qualified GHC.LanguageExtensions as LangExt
 
@@ -185,8 +186,9 @@ ghciCommands = map mkCmd [
   ("info",      keepGoing' (info False),        completeIdentifier),
   ("info!",     keepGoing' (info True),         completeIdentifier),
   ("issafe",    keepGoing' isSafeCmd,           completeModule),
-  ("kind",      keepGoing' (kindOfType False),  completeIdentifier),
-  ("kind!",     keepGoing' (kindOfType True),   completeIdentifier),
+  ("kind",      keepGoing' (kindOfType JustKind),  completeIdentifier),
+  ("kind!",     keepGoing' (kindOfType NormaliseTFs),   completeIdentifier),
+  ("kind!!",    keepGoing' (kindOfType NormaliseTFsAndSynonyms),   completeIdentifier),
   ("load",      keepGoingPaths loadModule_,     completeHomeModuleOrFile),
   ("load!",     keepGoingPaths loadModuleDefer, completeHomeModuleOrFile),
   ("list",      keepGoing' listCmd,             noCompletion),
@@ -1967,13 +1969,24 @@ showRealSrcSpan spn = concat [ fp, ":(", show sl, ",", show sc
     ec = srcSpanEndCol    spn
 
 -----------------------------------------------------------------------------
--- | @:kind@ command
+-- | @:kind[!!]@ commands
 
-kindOfType :: Bool -> String -> InputT GHCi ()
+data KindNormalise
+  = JustKind
+  | NormaliseTFs
+  | NormaliseTFsAndSynonyms
+
+kindOfType :: KindNormalise -> String -> InputT GHCi ()
 kindOfType norm str = handleSourceError GHC.printException $ do
-    (ty, kind) <- GHC.typeKind norm str
+    let norm' = case norm of
+          JustKind  -> False
+          otherwise -> True
+    (ty, kind) <- GHC.typeKind norm' str
+    let ty' = case norm of
+          NormaliseTFsAndSynonyms -> expandTypeSynonyms ty
+          _ -> ty
     printForUser $ vcat [ text str <+> dcolon <+> pprTypeForUser kind
-                        , ppWhen norm $ equals <+> pprTypeForUser ty ]
+                        , ppWhen norm' $ equals <+> pprTypeForUser ty' ]
 
 -----------------------------------------------------------------------------
 -- :quit

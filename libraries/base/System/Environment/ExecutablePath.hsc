@@ -38,6 +38,9 @@ import Foreign.C
 import Foreign.Marshal.Array
 import Foreign.Ptr
 import System.Posix.Internals
+import System.Win32.DLL
+import System.Win32.File
+import System.Win32.Types
 #else
 import Foreign.C
 import Foreign.Marshal.Alloc
@@ -146,8 +149,55 @@ getExecutablePath = go 2048  -- plenty, PATH_MAX is 512 under Win32
         ret <- c_GetModuleFileName nullPtr buf size
         case ret of
             0 -> errorWithoutStackTrace "getExecutablePath: GetModuleFileNameW returned an error"
-            _ | ret < size -> peekFilePath buf
+            _ | ret < size -> do
+                  path <- peekFilePath buf
+                  sanitize <$> getFinalPath path
               | otherwise  -> go (size * 2)
+
+    sanitize s = if "\\\\?\\" `isPrefixOf` s
+                    then drop 4 s
+                    else s
+
+-- Attempt to resolve symlinks in order to find the actual location GHC
+-- is located at. See Trac #11759.
+getFinalPath :: FilePath -> IO (Maybe FilePath)
+getFinalPath name = do
+    dllHwnd <- failIfNull "LoadLibrary"     $ loadLibrary "kernel32.dll"
+    -- Note: The API GetFinalPathNameByHandleW is only available starting from Windows Vista.
+    -- This means that we can't bind directly to it since it may be missing.
+    -- Instead try to find it's address at runtime and if we don't succeed consider the
+    -- function failed.
+    addr_m  <- (fmap Just $ failIfNull "getProcAddress" $ getProcAddress dllHwnd "GetFinalPathNameByHandleW")
+                  `catch` (\(_ :: SomeException) -> return Nothing)
+    case addr_m of
+      Nothing   -> return Nothing
+      Just addr -> do handle  <- failIf (==iNVALID_HANDLE_VALUE) "CreateFile"
+                                        $ createFile name
+                                                     gENERIC_READ
+                                                     fILE_SHARE_READ
+                                                     Nothing
+                                                     oPEN_EXISTING
+                                                     (fILE_ATTRIBUTE_NORMAL .|. fILE_FLAG_BACKUP_SEMANTICS)
+                                                     Nothing
+                      let fnPtr = makeGetFinalPathNameByHandle $ castPtrToFunPtr addr
+                      -- First try to resolve the path to get the actual path
+                      -- of any symlinks or other file system redirections that
+                      -- may be in place. However this function can fail, and in
+                      -- the event it does fail, we need to try using the
+                      -- original path and see if we can decompose that.
+                      -- If the call fails Win32.try will raise an exception
+                      -- that needs to be caught. See #14159
+                      path    <- (Win32.try "GetFinalPathName"
+                                    (\buf len -> fnPtr handle buf len 0) 512
+                                    `finally` closeHandle handle)
+                                `catch`
+                                 (\(_ :: IOException) -> return name)
+                      return $ Just path
+
+type GetFinalPath = HANDLE -> LPTSTR -> DWORD -> DWORD -> IO DWORD
+
+foreign import WINDOWS_CCONV unsafe "dynamic"
+  makeGetFinalPathNameByHandle :: FunPtr GetFinalPath -> GetFinalPath
 
 --------------------------------------------------------------------------------
 -- Fallback to argv[0]

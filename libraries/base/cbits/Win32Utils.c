@@ -148,4 +148,23 @@ BOOL file_exists(LPCTSTR path)
     return r != INVALID_FILE_ATTRIBUTES;
 }
 
+DWORD getFinalPath(LPSTR path, LPTSTR outPath, DWORD bufSize)
+{
+    HANDLE hndl = CreateFile(path,
+			     GENERIC_READ,
+			     FILE_SHARE_READ,
+			     NULL,
+			     OPEN_EXISTING,
+			     FILE_ATTRIBUTE_NORMAL,
+			     NULL);
+
+    if(hndl == INVALID_HANDLE_VALUE)
+    {
+        printf("Could not open file (error %d)\n", GetLastError());
+        return -1;
+    }
+
+    return GetFinalPathNameByHandeW(hndl, outPath, bufSize, 0);
+}
+
 #endif

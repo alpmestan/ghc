@@ -420,7 +420,11 @@ else # CLEANING
 # programs such as GHC and ghc-pkg, that we do not assume the stage0
 # compiler already has installed (or up-to-date enough).
 
-PACKAGES_STAGE0 = binary text transformers mtl parsec Cabal/Cabal hpc ghc-boot-th ghc-boot template-haskell ghci
+PACKAGES_STAGE0 = binary text transformers mtl parsec
+ifeq "$(Windows_Host)" "YES"
+PACKAGES_STAGE0 += Win32
+endif
+PACKAGES_STAGE0 += time directory process Cabal/Cabal hpc ghc-boot-th ghc-boot template-haskell ghci
 ifeq "$(Windows_Host)" "NO"
 PACKAGES_STAGE0 += terminfo
 endif

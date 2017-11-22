@@ -35,6 +35,7 @@ import System.Posix.Internals
 #elif defined(mingw32_HOST_OS)
 import Data.Word
 import Foreign.C
+import Foreign.C.String
 import Foreign.Marshal.Array
 import Foreign.Ptr
 import System.Posix.Internals
@@ -139,6 +140,16 @@ getExecutablePath = readSymbolicLink $ "/proc/self/exe"
 
 foreign import WINDOWS_CCONV unsafe "windows.h GetModuleFileNameW"
     c_GetModuleFileName :: Ptr () -> CWString -> Word32 -> IO Word32
+foreign import WINDOWS_CCONV unsafe "windows.h CloseHandle"
+    c_CloseHandle  :: Ptr () -> IO Bool
+
+-- These 3 functions are defined in cbits/Win32Utils.c
+foreign import WINDOWS_CCONV unsafe "createFile"
+  c_createFile :: CWString -> IO (Ptr ())
+foreign import WINDOWS_CCONV unsafe "isInvalidHandle"
+  c_isInvalidHandle :: Ptr () -> IO Bool
+foreign import WINDOWS_CCONV unsafe "getFinalPath"
+  c_getFinalPathHandle :: Ptr () -> CWString -> Word32 -> IO Word32
 
 getExecutablePath = go 2048  -- plenty, PATH_MAX is 512 under Win32
   where
@@ -146,8 +157,34 @@ getExecutablePath = go 2048  -- plenty, PATH_MAX is 512 under Win32
         ret <- c_GetModuleFileName nullPtr buf size
         case ret of
             0 -> errorWithoutStackTrace "getExecutablePath: GetModuleFileNameW returned an error"
-            _ | ret < size -> peekFilePath buf
+            _ | ret < size -> do
+                  path <- peekCWString buf
+                  real <- getFinalPath path
+                  exists <- doesFileExist real
+                  if exists
+                    then return (Just real)
+                    else fail path
               | otherwise  -> go (size * 2)
+
+-- | Returns the final path of the given path. If the given
+--   path is a symbolic link, the returned value is the
+--   path the (possibly chain of) symbolic link(s) points to.
+--   Otherwise, the original path is returned, even when the filepath
+--   is incorrect.
+getFinalPath :: FilePath -> IO FilePath
+getFinalPath path = withCWString path $ \s ->
+  bracket (c_createFile s) c_closeHandle $ \h -> do
+    invalid <- c_isInvalidHandle h
+    if invalid then pure path else go h bufSize
+
+  where go h sz = allocaArray (fromIntegral sz) $ \outPath -> do
+          ret <- c_getFinalPathHandle h outPath sz
+          if ret < sz
+            then sanitize <$> peekCWString outPath
+            else go h (2 * sz)
+
+        sanitize s = if "\\\\?\\" `isPrefixOf` s then drop 4 s else s
+        bufSize = 1024 -- should be larger than Win32's PATH_MAX
 
 --------------------------------------------------------------------------------
 -- Fallback to argv[0]

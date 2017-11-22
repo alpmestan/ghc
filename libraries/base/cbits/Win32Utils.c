@@ -148,23 +148,30 @@ BOOL file_exists(LPCTSTR path)
     return r != INVALID_FILE_ATTRIBUTES;
 }
 
-DWORD getFinalPath(LPSTR path, LPTSTR outPath, DWORD bufSize)
+
+// These 3 functions are used by System.Environment.Windows.getFinalPAth.
+// Adapted from
+// https://msdn.microsoft.com/en-us/library/windows/desktop/aa364962(v=vs.85).aspx
+
+BOOL isInvalidHandle(HANDLE hndl)
 {
-    HANDLE hndl = CreateFile(path,
-			     GENERIC_READ,
-			     FILE_SHARE_READ,
-			     NULL,
-			     OPEN_EXISTING,
-			     FILE_ATTRIBUTE_NORMAL,
-			     NULL);
+    return hndl == INVALID_HANDLE_VALUE;
+}
 
-    if(hndl == INVALID_HANDLE_VALUE)
-    {
-        printf("Could not open file (error %d)\n", GetLastError());
-        return -1;
-    }
+HANDLE createFile(LPCWSTR path)
+{
+    return CreateFileW(path,
+		       GENERIC_READ,
+		       FILE_SHARE_READ,
+		       NULL,
+		       OPEN_EXISTING,
+		       FILE_ATTRIBUTE_NORMAL,
+		       NULL);
+}
 
-    return GetFinalPathNameByHandeW(hndl, outPath, bufSize, 0);
+DWORD getFinalPath(HANDLE hndl, LPWSTR outPath, DWORD bufSize)
+{
+    return GetFinalPathNameByHandleW(hndl, outPath, bufSize, 0);
 }
 
 #endif

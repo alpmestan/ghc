@@ -56,6 +56,10 @@ import System.Posix.Internals
 -- Note that for scripts and interactive sessions, this is the path to
 -- the interpreter (e.g. ghci.)
 --
+-- Since base 4.11.0.0, 'getExecutablePath' resolves symlinks on Windows.
+-- If an executable is launched through a symlink, 'getExecutablePath'
+-- returns the absolute path of the original executable.
+--
 -- @since 4.6.0.0
 getExecutablePath :: IO FilePath
 

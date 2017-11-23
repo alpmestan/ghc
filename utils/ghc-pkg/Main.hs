@@ -2080,7 +2080,16 @@ dieForcible s = die (s ++ " (use --force to override)")
 -- Cut and pasted from ghc/compiler/main/SysTools
 
 getLibDir :: IO (Maybe String)
+
 #if defined(mingw32_HOST_OS)
+#if MIN_VERSION_base(4,11,0)
+#define SIMPLE_WIN_GETLIBDIR 1
+#else
+#define SIMPLE_WIN_GETLIBDIR 0
+#endif
+#endif
+
+#if defined(mingw32_HOST_OS) && !SIMPLE_WIN_GETLIBDIR
 subst :: Char -> Char -> String -> String
 subst a b ls = map (\ x -> if x == a then b else x) ls
 
@@ -2119,16 +2128,7 @@ getExecPath = try_size 2048 -- plenty, PATH_MAX is 512 under Win32.
 
 foreign import WINDOWS_CCONV unsafe "windows.h GetModuleFileNameW"
   c_GetModuleFileName :: Ptr () -> CWString -> Word32 -> IO Word32
-#elif defined(darwin_HOST_OS) || defined(linux_HOST_OS)
--- TODO: a) this is copy-pasta from SysTools.hs / getBaseDir. Why can't we reuse
---          this here? and parameterise getBaseDir over the executable (for
---          windows)?
---          Answer: we can not, because if we share `getBaseDir` via `ghc-boot`,
---                  that would add `base` as a dependency for windows.
---       b) why is the windows getBaseDir logic, not part of getExecutablePath?
---          it would be much wider available then and we could drop all the
---          custom logic?
---          Answer: yes this should happen. No one has found the time just yet.
+#elif SIMPLE_WIN_GETLIBDIR || defined(darwin_HOST_OS) || defined(linux_HOST_OS)
 getLibDir = Just . (\p -> p </> "lib") . takeDirectory . takeDirectory <$> getExecutablePath
 #else
 getLibDir = return Nothing

@@ -99,22 +99,27 @@ findTopDir Nothing
              Just dir -> return dir
 
 getBaseDir :: IO (Maybe String)
+
 #if defined(mingw32_HOST_OS)
+
+rootDir :: FilePath -> FilePath
+rootDir s = case splitFileName $ normalise s of
+  (d, ghc_exe)
+    | lower ghc_exe `elem` expectedNames ->
+        case splitFileName $ takeDirectory d of
+          -- ghc is in $topdir/bin/ghc.exe
+          (d', _) -> takeDirectory d' </> "lib"
+  _ -> fail s
+
+  where expectedNames = ["ghc.exe", "ghc-stage1.exe",
+                         "ghc-stage2.exe", "ghc-stage3.exe"]
+
+        fail s = panic ("can't decompose ghc.exe path: " ++ show s)
+        lower = map toLower
+
+
 #if MIN_VERSION_base(4,11,0)
 getBaseDir = rootDir <$> getExecutablePath
-  where
-    rootDir s = case splitFileName $ normalise s of
-                (d, ghc_exe)
-                 | lower ghc_exe `elem` ["ghc.exe",
-                                         "ghc-stage1.exe",
-                                         "ghc-stage2.exe",
-                                         "ghc-stage3.exe"] ->
-                    case splitFileName $ takeDirectory d of
-                    -- ghc is in $topdir/bin/ghc.exe
-                    (d', _) -> takeDirectory d' </> "lib"
-                _ -> fail s
-    fail s = panic ("can't decompose ghc.exe path: " ++ show s)
-    lower = map toLower
 #else
 -- Assuming we are running ghc, accessed by path  $(stuff)/<foo>/ghc.exe,
 -- return the path $(stuff)/lib.
@@ -199,6 +204,7 @@ type GetFinalPath = HANDLE -> LPTSTR -> DWORD -> DWORD -> IO DWORD
 
 foreign import WINDOWS_CCONV unsafe "dynamic"
   makeGetFinalPathNameByHandle :: FunPtr GetFinalPath -> GetFinalPath
+#endif
 #elif defined(darwin_HOST_OS) || defined(linux_HOST_OS)
 -- on unix, this is a bit more confusing.
 -- The layout right now is somehting like

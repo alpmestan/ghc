@@ -138,19 +138,6 @@ getExecutablePath = readSymbolicLink $ "/proc/self/exe"
 #  error Unknown mingw32 arch
 # endif
 
-foreign import WINDOWS_CCONV unsafe "windows.h GetModuleFileNameW"
-    c_GetModuleFileName :: Ptr () -> CWString -> Word32 -> IO Word32
-foreign import WINDOWS_CCONV unsafe "windows.h CloseHandle"
-    c_CloseHandle  :: Ptr () -> IO Bool
-
--- These 3 functions are defined in cbits/Win32Utils.c
-foreign import WINDOWS_CCONV unsafe "createFile"
-  c_createFile :: CWString -> IO (Ptr ())
-foreign import WINDOWS_CCONV unsafe "isInvalidHandle"
-  c_isInvalidHandle :: Ptr () -> IO Bool
-foreign import WINDOWS_CCONV unsafe "getFinalPath"
-  c_getFinalPathHandle :: Ptr () -> CWString -> Word32 -> IO Word32
-
 getExecutablePath = go 2048  -- plenty, PATH_MAX is 512 under Win32
   where
     go size = allocaArray (fromIntegral size) $ \ buf -> do
@@ -171,20 +158,59 @@ getExecutablePath = go 2048  -- plenty, PATH_MAX is 512 under Win32
 --   path the (possibly chain of) symbolic link(s) points to.
 --   Otherwise, the original path is returned, even when the filepath
 --   is incorrect.
+--
+-- Adapted from:
+-- https://msdn.microsoft.com/en-us/library/windows/desktop/aa364962(v=vs.85).aspx
 getFinalPath :: FilePath -> IO FilePath
 getFinalPath path = withCWString path $ \s ->
-  bracket (c_createFile s) c_closeHandle $ \h -> do
-    invalid <- c_isInvalidHandle h
+  bracket (createFile s) c_closeHandle $ \h -> do
+    let invalid = h == wordPtrToPtr (#const INVALID_HANDLE_VALUE)
     if invalid then pure path else go h bufSize
 
   where go h sz = allocaArray (fromIntegral sz) $ \outPath -> do
           ret <- c_getFinalPathHandle h outPath sz
           if ret < sz
-            then sanitize <$> peekCWString outPath
+            then sanitize . rejectUNCPath <$> peekCWString outPath
             else go h (2 * sz)
 
-        sanitize s = if "\\\\?\\" `isPrefixOf` s then drop 4 s else s
-        bufSize = 1024 -- should be larger than Win32's PATH_MAX
+        sanitize s
+          | "\\\\?\\" `isPrefixOf` s = drop 4 s
+          | otherwise                = s
+
+        rejectUNCPath s
+          | "\\\\?\\UNC\\" `isPrefixOf` s = path
+          | otherwise                     = s
+        -- see https://ghc.haskell.org/trac/ghc/ticket/14460
+
+        bufSize = 1024 -- plenty. should be larger than Win32's PATH_MAX
+
+foreign import WINDOWS_CCONV unsafe "windows.h GetModuleFileNameW"
+    c_GetModuleFileName :: Ptr () -> CWString -> Word32 -> IO Word32
+
+foreign import WINDOWS_CCONV unsafe "windows.h CreateFileW"
+    c_createFile :: CWString
+                 -> Word32
+                 -> Word32
+                 -> Ptr ()
+                 -> Word32
+                 -> Word32
+                 -> Ptr ()
+                 -> IO (Ptr ())
+
+createFile :: CWString -> IO (Ptr ())
+createFile file =
+  c_createFile file (#const GENERIC_READ)
+                    (#const FILE_SHARE_READ)
+                    nullPtr
+                    (#const OPEN_EXISTING)
+                    (#const FILE_ATTRIBUTE_NORMAL)
+                    nullPtr
+
+foreign import WINDOWS_CCONV unsafe "windows.h CloseHandle"
+  c_closeHandle  :: Ptr () -> IO Bool
+
+foreign import WINDOWS_CCONV unsafe "windows.h GetFinalPathNameByHandleW"
+  c_getFinalPathHandle :: Ptr () -> CWString -> Word32 -> Word32 -> IO Word32
 
 --------------------------------------------------------------------------------
 -- Fallback to argv[0]

@@ -148,30 +148,4 @@ BOOL file_exists(LPCTSTR path)
     return r != INVALID_FILE_ATTRIBUTES;
 }
 
-
-// These 3 functions are used by System.Environment.Windows.getFinalPAth.
-// Adapted from
-// https://msdn.microsoft.com/en-us/library/windows/desktop/aa364962(v=vs.85).aspx
-
-BOOL isInvalidHandle(HANDLE hndl)
-{
-    return hndl == INVALID_HANDLE_VALUE;
-}
-
-HANDLE createFile(LPCWSTR path)
-{
-    return CreateFileW(path,
-		       GENERIC_READ,
-		       FILE_SHARE_READ,
-		       NULL,
-		       OPEN_EXISTING,
-		       FILE_ATTRIBUTE_NORMAL,
-		       NULL);
-}
-
-DWORD getFinalPath(HANDLE hndl, LPWSTR outPath, DWORD bufSize)
-{
-    return GetFinalPathNameByHandleW(hndl, outPath, bufSize, 0);
-}
-
 #endif

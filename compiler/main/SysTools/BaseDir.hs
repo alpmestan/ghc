@@ -106,20 +106,7 @@ getBaseDir :: IO (Maybe String)
 -- to the real ghc executable (as opposed to symlink)
 -- that is running this function.
 rootDir :: FilePath -> FilePath
-rootDir s = case splitFileName $ normalise s of
-  (d, ghc_exe)
-    | lower ghc_exe `elem` expectedNames ->
-        case splitFileName $ takeDirectory d of
-          -- ghc is in $topdir/bin/ghc.exe
-          (d', _) -> takeDirectory d' </> "lib"
-  _ -> fail s
-
-  where expectedNames = ["ghc.exe", "ghc-stage1.exe",
-                         "ghc-stage2.exe", "ghc-stage3.exe"]
-
-        fail s = panic ("can't decompose ghc.exe path: " ++ show s)
-        lower = map toLower
-
+rootDir s = takeDirectory . takeDirectory . normalise
 
 #if MIN_VERSION_base(4,11,0)
 getBaseDir = rootDir <$> getExecutablePath

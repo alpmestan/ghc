@@ -165,7 +165,7 @@ getExecutablePath = go 2048  -- plenty, PATH_MAX is 512 under Win32
 --   is incorrect.
 --
 -- Adapted from:
--- https://msdn.microsoft.com/en-us/library/windows/desktop/aa364962(v=vs.85).aspx
+-- https://msdn.microsoft.com/en-us/library/windows/desktop/aa364962.aspx
 getFinalPath :: FilePath -> IO FilePath
 getFinalPath path = withCWString path $ \s ->
   bracket (createFile s) c_closeHandle $ \h -> do
@@ -173,7 +173,7 @@ getFinalPath path = withCWString path $ \s ->
     if invalid then pure path else go h bufSize
 
   where go h sz = allocaArray (fromIntegral sz) $ \outPath -> do
-          ret <- c_getFinalPathHandle h outPath sz 0
+          ret <- c_getFinalPathHandle h outPath sz (#const FILE_NAME_OPENED)
           if ret < sz
             then sanitize . rejectUNCPath <$> peekCWString outPath
             else go h (2 * sz)
@@ -187,7 +187,11 @@ getFinalPath path = withCWString path $ \s ->
           | "\\\\?\\UNC\\" `isPrefixOf` s = path
           | otherwise                     = s
 
-        bufSize = 1024 -- plenty. should be larger than Win32's PATH_MAX
+        -- the initial size of the buffer in which we store the
+        -- final path; if this is not enough, we try with a buffer of
+        -- size 2^k * bufSize, for k = 1, 2, 3, ... until the buffer
+        -- is large enough.
+        bufSize = 1024
 
 foreign import WINDOWS_CCONV unsafe "windows.h GetModuleFileNameW"
     c_GetModuleFileName :: Ptr () -> CWString -> Word32 -> IO Word32

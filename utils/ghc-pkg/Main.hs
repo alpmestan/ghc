@@ -2081,6 +2081,16 @@ dieForcible s = die (s ++ " (use --force to override)")
 
 getLibDir :: IO (Maybe String)
 
+-- The SIMPLE_WIN_GETLIBDIR macro will only be set when
+-- building on windows.
+--
+-- Its purpose is to let us know whether the Windows implementation of
+-- 'getExecutablePath' follows symlinks or not (it does follow them in
+-- base >= 4.11). If it does, the implementation of getLibDir is straightforward
+-- but if it does not follow symlinks, we need to follow them ourselves here.
+-- Once we do not have to support building ghc-pkg with base < 4.11 anymore,
+-- we can just keep the simple, straightforward implementation that just uses
+-- 'getExecutablePath'.
 #if defined(mingw32_HOST_OS)
 #if MIN_VERSION_base(4,11,0)
 #define SIMPLE_WIN_GETLIBDIR 1

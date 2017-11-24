@@ -102,6 +102,9 @@ getBaseDir :: IO (Maybe String)
 
 #if defined(mingw32_HOST_OS)
 
+-- locate the "base dir" when given the path
+-- to the real ghc executable (as opposed to symlink)
+-- that is running this function.
 rootDir :: FilePath -> FilePath
 rootDir s = case splitFileName $ normalise s of
   (d, ghc_exe)

@@ -63,7 +63,7 @@ cabal-version: >=1.10
 
 Executable iserv-proxy
    Default-Language: Haskell2010
-   Main-Is: Remote.hs
+   Main-Is: Main.hs
    Hs-Source-Dirs: src
    Build-Depends: array      >= 0.5 && < 0.6,
                   base       >= 4   && < 5,

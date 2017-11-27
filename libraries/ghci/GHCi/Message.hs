@@ -538,7 +538,7 @@ getBin h get leftover = go leftover (runGetIncremental get)
  where
    go Nothing (Done leftover _ msg) =
      return (Just (msg, if B.null leftover then Nothing else Just leftover))
-   go _ Done{} = throwIO (ErrorCall "getBin: Done with leftovers")
+   go (Just leftover) Done{} = throwIO (ErrorCall $ "getBin: Done with leftovers: " ++ show leftover)
    go (Just leftover) (Partial fun) = do
      go Nothing (fun (Just leftover))
    go Nothing (Partial fun) = do

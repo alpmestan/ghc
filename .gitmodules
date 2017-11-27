@@ -141,3 +141,6 @@
 [submodule "hadrian"]
 	path = hadrian
 	url = https://github.com/snowleopard/hadrian.git
+[submodule "libraries/network"]
+	path = libraries/network
+	url = https://github.com/haskell/network.git

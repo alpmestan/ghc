@@ -97,10 +97,12 @@ import qualified Data.Set as Set
 import qualified Data.Map as Map
 
 #if defined(mingw32_HOST_OS)
--- mingw32 needs these for getExecDir
+#if !SIMPLE_WIN_GETLIBDIR
+-- mingw32 needs these for getExecDir when base < 4.11
 import Foreign
 import Foreign.C
 import System.Directory ( canonicalizePath )
+#endif
 import GHC.ConsoleHandler
 #else
 import System.Posix hiding (fdToHandle)

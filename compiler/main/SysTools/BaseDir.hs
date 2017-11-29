@@ -39,6 +39,9 @@ import Exception
 import Foreign
 import Foreign.C.String
 import System.Directory
+#if MIN_VERSION_base(4,11,0)
+import System.Environment (getExecutablePath)
+#endif
 import System.Win32.Types (DWORD, LPTSTR, HANDLE)
 import System.Win32.Types (failIfNull, failIf, iNVALID_HANDLE_VALUE)
 import System.Win32.File (createFile,closeHandle, gENERIC_READ, fILE_SHARE_READ, oPEN_EXISTING, fILE_ATTRIBUTE_NORMAL, fILE_FLAG_BACKUP_SEMANTICS )
@@ -106,7 +109,7 @@ getBaseDir :: IO (Maybe String)
 -- to the real ghc executable (as opposed to symlink)
 -- that is running this function.
 rootDir :: FilePath -> FilePath
-rootDir s = takeDirectory . takeDirectory . normalise
+rootDir = takeDirectory . takeDirectory . normalise
 
 #if MIN_VERSION_base(4,11,0)
 getBaseDir = rootDir <$> getExecutablePath

@@ -112,7 +112,7 @@ rootDir :: FilePath -> FilePath
 rootDir = takeDirectory . takeDirectory . normalise
 
 #if MIN_VERSION_base(4,11,0)
-getBaseDir = rootDir <$> getExecutablePath
+getBaseDir = Just . rootDir <$> getExecutablePath
 #else
 -- Assuming we are running ghc, accessed by path  $(stuff)/<foo>/ghc.exe,
 -- return the path $(stuff)/lib.

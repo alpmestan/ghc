@@ -30,7 +30,9 @@ import System.Environment (getExecutablePath)
 -- Windows
 #if defined(mingw32_HOST_OS)
 #if MIN_VERSION_Win32(2,5,0)
+#if !MIN_VERSION_base(4,11,0)
 import qualified System.Win32.Types as Win32
+#endif
 #else
 import qualified System.Win32.Info as Win32
 #endif

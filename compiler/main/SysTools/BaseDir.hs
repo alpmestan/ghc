@@ -34,18 +34,19 @@ import qualified System.Win32.Types as Win32
 #else
 import qualified System.Win32.Info as Win32
 #endif
+#if MIN_VERSION_base(4,11,0)
+import System.Environment (getExecutablePath)
+#else
 import Data.Char
 import Exception
 import Foreign
 import Foreign.C.String
 import System.Directory
-#if MIN_VERSION_base(4,11,0)
-import System.Environment (getExecutablePath)
-#endif
 import System.Win32.Types (DWORD, LPTSTR, HANDLE)
 import System.Win32.Types (failIfNull, failIf, iNVALID_HANDLE_VALUE)
 import System.Win32.File (createFile,closeHandle, gENERIC_READ, fILE_SHARE_READ, oPEN_EXISTING, fILE_ATTRIBUTE_NORMAL, fILE_FLAG_BACKUP_SEMANTICS )
 import System.Win32.DLL (loadLibrary, getProcAddress)
+#endif
 #endif
 
 #if defined(mingw32_HOST_OS)

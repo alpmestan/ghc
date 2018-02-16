@@ -85,6 +85,7 @@ typedef struct _GC_FLAGS {
 
     bool numa;                   /* Use NUMA */
     StgWord numaMask;
+    bool thunkSelOpt;          /* disable thunk selector optimization */
 } GC_FLAGS;
 
 /* See Note [Synchronization of flags and base APIs] */
@@ -107,6 +108,7 @@ typedef struct _DEBUG_FLAGS {
     bool sparks;         /* 'r' */
     bool numa;           /* '--debug-numa' */
     bool compact;        /* 'C' */
+    bool thunksel;       /* 'k' (for thunK selectors) */
 } DEBUG_FLAGS;
 
 /* See Note [Synchronization of flags and base APIs] */

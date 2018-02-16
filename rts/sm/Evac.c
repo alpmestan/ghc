@@ -784,7 +784,14 @@ loop:
       return;
 
   case THUNK_SELECTOR:
-      eval_thunk_selector(p, (StgSelector *)q, true);
+      debugTrace(DEBUG_thunksel, "thunk selectors: evacuate encountered a THUNK_SELECTOR");
+      if(RtsFlags.GcFlags.thunkSelOpt) {
+          eval_thunk_selector(p, (StgSelector *)q, true);
+      } else {
+          copy(p,info,q,THUNK_SELECTOR_sizeW(),gen_no);
+          debugTrace(DEBUG_thunksel, "thunk selectors: evacuated without evaluating (-z was passed to the RTS)");
+      }
+      debugTrace(DEBUG_thunksel, "thunk selectors: done evacuating this THUNK_SELECTOR closure");
       return;
 
   case IND:
@@ -962,6 +969,7 @@ evacuate_BLACKHOLE(StgClosure **p)
 static void
 unchain_thunk_selectors(StgSelector *p, StgClosure *val)
 {
+    debugTrace(DEBUG_thunksel, "thunk selectors: entered unchain_thunk_selectors");
     StgSelector *prev;
 
     prev = NULL;
@@ -994,10 +1002,12 @@ unchain_thunk_selectors(StgSelector *p, StgClosure *val)
             // XXX we do not have BLACKHOLEs any more; replace with
             // a THUNK_SELECTOR again.  This will go into a loop if it is
             // entered, and should result in a NonTermination exception.
+            debugTrace(DEBUG_thunksel, "thunk selectors: unchain_thunk_selector found a looping chain");
             ((StgThunk *)p)->payload[0] = val;
             write_barrier();
             SET_INFO((StgClosure *)p, &stg_sel_0_upd_info);
         } else {
+            debugTrace(DEBUG_thunksel, "thunk selectors: unchain_thunk_selector is about to replace a THUNK_SELECTOR by an indirection");
             ((StgInd *)p)->indirectee = val;
             write_barrier();
             SET_INFO((StgClosure *)p, &stg_IND_info);
@@ -1141,6 +1151,7 @@ selector_loop:
       case CONSTR_0_2:
       case CONSTR_NOCAF:
           {
+              debugTrace(DEBUG_thunksel, "selector_loop: CONSTR-like case");
               // check that the size is in range
               ASSERT(field <  (StgWord32)(info->layout.payload.ptrs +
                                           info->layout.payload.nptrs));
@@ -1168,6 +1179,7 @@ selector_loop:
               // evaluating until we find the real value, and then
               // update the whole chain to point to the value.
           val_loop:
+              debugTrace(DEBUG_thunksel, "selector_loop > val_loop");
               info_ptr = (StgWord)UNTAG_CLOSURE(val)->header.info;
               if (!IS_FORWARDING_PTR(info_ptr))
               {
@@ -1175,9 +1187,11 @@ selector_loop:
                   switch (info->type) {
                   case IND:
                   case IND_STATIC:
+                      debugTrace(DEBUG_thunksel, "selector_loop > val_loop: IND-like case");
                       val = ((StgInd *)val)->indirectee;
                       goto val_loop;
                   case THUNK_SELECTOR:
+                      debugTrace(DEBUG_thunksel, "selector_loop > val_loop: THUNK_SELECTOR case");
                       ((StgClosure*)p)->payload[0] = (StgClosure *)prev_thunk_selector;
                       prev_thunk_selector = p;
                       p = (StgSelector*)val;
@@ -1190,6 +1204,8 @@ selector_loop:
               prev_thunk_selector = p;
 
               *q = val;
+
+              debugTrace(DEBUG_thunksel, "selector_loop > out of val_loop");
 
               // update the other selectors in the chain *before*
               // evacuating the value.  This is necessary in the case
@@ -1207,12 +1223,14 @@ selector_loop:
 
       case IND:
       case IND_STATIC:
+          debugTrace(DEBUG_thunksel, "selector_loop: IND-like case")
           // Again, we might need to untag a constructor.
           selectee = UNTAG_CLOSURE( ((StgInd *)selectee)->indirectee );
           goto selector_loop;
 
       case BLACKHOLE:
       {
+          debugTrace(DEBUG_thunksel, "selector_loop: BLACKHOLE");
           StgClosure *r;
           const StgInfoTable *i;
           r = ((StgInd*)selectee)->indirectee;
@@ -1240,11 +1258,13 @@ selector_loop:
 
       case THUNK_SELECTOR:
       {
+          debugTrace(DEBUG_thunksel, "selector_loop: THUNK_SELECTOR case");
           StgClosure *val;
 
           // recursively evaluate this selector.  We don't want to
           // recurse indefinitely, so we impose a depth bound.
           if (gct->thunk_selector_depth >= MAX_THUNK_SELECTOR_DEPTH) {
+              debugTrace(DEBUG_thunksel, "thunk selectors: max depth reached in eval_thunk_selector");
               goto bale_out;
           }
 
@@ -1291,6 +1311,7 @@ bale_out:
     if (evac) {
         copy(q,(const StgInfoTable *)info_ptr,(StgClosure *)p,THUNK_SELECTOR_sizeW(),bd->dest_no);
     }
+    debugTrace(DEBUG_thunksel, "about to unchain after giving up");
     unchain_thunk_selectors(prev_thunk_selector, *q);
     return;
 }

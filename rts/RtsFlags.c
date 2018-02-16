@@ -168,6 +168,7 @@ void initRtsFlagsDefaults(void)
     RtsFlags.GcFlags.numaMask           = 1;
     RtsFlags.GcFlags.ringBell           = false;
     RtsFlags.GcFlags.longGCSync         = 0; /* detection turned off */
+    RtsFlags.GcFlags.thunkSelOpt        = true;
 
     RtsFlags.DebugFlags.scheduler       = false;
     RtsFlags.DebugFlags.interpreter     = false;
@@ -186,6 +187,7 @@ void initRtsFlagsDefaults(void)
     RtsFlags.DebugFlags.sparks          = false;
     RtsFlags.DebugFlags.numa            = false;
     RtsFlags.DebugFlags.compact         = false;
+    RtsFlags.DebugFlags.thunksel        = false;
 
 #if defined(PROFILING)
     RtsFlags.CcFlags.doCostCentres      = COST_CENTRES_NONE;
@@ -296,6 +298,7 @@ usage_text[] = {
 "  -c       Use in-place compaction for all oldest generation collections",
 "           (the default is to use copying)",
 "  -w       Use mark-region for the oldest generation (experimental)",
+"  -z       Disable the selector thunk optimisation",
 #if defined(THREADED_RTS)
 "  -I<sec>  Perform full GC after <sec> idle time (default: 0.3, 0 == off)",
 #endif
@@ -402,6 +405,7 @@ usage_text[] = {
 "  -Dc  DEBUG: program coverage",
 "  -Dr  DEBUG: sparks",
 "  -DC  DEBUG: compact",
+"  -Dk  DEBUG: thunk selectors",
 "",
 "     NOTE: DEBUG events are sent to stderr by default; add -l to create a",
 "     binary event log file instead.",
@@ -1017,6 +1021,12 @@ error = true;
               OPTION_SAFE;
               DEBUG_BUILD_ONLY(read_debug_flags(rts_argv[arg]);)
               break;
+
+              case 'z':
+                OPTION_UNSAFE;
+                printf("Disabling the thunk selector optimisation... good luck.\n");
+                RtsFlags.GcFlags.thunkSelOpt = false;
+                break;
 
               case 'K':
                   OPTION_UNSAFE;
@@ -1836,6 +1846,9 @@ static void read_debug_flags(const char* arg)
             break;
         case 'C':
             RtsFlags.DebugFlags.compact = true;
+            break;
+        case 'k':
+            RtsFlags.DebugFlags.thunksel = true;
             break;
         default:
             bad_option( arg );

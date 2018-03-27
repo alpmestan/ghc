@@ -351,17 +351,11 @@ See also Note [seqId magic] in MkId
 
 tcExpr expr@(OpApp arg1 op fix arg2) res_ty
   | (L loc (HsVar (L lv op_name))) <- op
-  , op_name `hasKey` seqIdKey           -- Note [Typing rule for seq]
-  = do { arg1_ty <- newFlexiTyVarTy liftedTypeKind
-       ; let arg2_exp_ty = res_ty
-       ; arg1' <- tcArg op arg1 arg1_ty 1
-       ; arg2' <- addErrCtxt (funAppCtxt op arg2 2) $
-                  tc_poly_expr_nc arg2 arg2_exp_ty
-       ; arg2_ty <- readExpType arg2_exp_ty
-       ; op_id <- tcLookupId op_name
-       ; let op' = L loc (mkHsWrap (mkWpTyApps [arg1_ty, arg2_ty])
-                                   (HsVar (L lv op_id)))
-       ; return $ OpApp arg1' op' fix arg2' }
+  , op_name `hasKey` seqIdKey || op_name `hasKey` pseqIdKey   -- Note [Typing rule for seq]
+  = do { (wrapper, fun, [HsValArg arg1', HsValArg arg2']) <- tcSeq loc op_name [HsValArg arg1, HsValArg arg2] res_ty
+       -- the pattern above is not dangerous:
+       -- tcSeq always returns two HsValArg args when it succeeds
+       ; return (mkHsWrap wrapper $ OpApp arg1' fun fix arg2') }
 
   | (L loc (HsVar (L lv op_name))) <- op
   , op_name `hasKey` dollarIdKey        -- Note [Typing rule for ($)]
@@ -1178,8 +1172,8 @@ tcApp _ (L loc (HsVar (L _ fun_id))) args res_ty
   = do { (wrap, expr, args) <- tcTagToEnum loc fun_id args res_ty
        ; return (wrap, expr, args) }
 
-  -- Special typing rule for 'seq'
-  | fun_id `hasKey` seqIdKey
+  -- Special typing rule for 'seq' and 'pseq'
+  | fun_id `hasKey` seqIdKey || fun_id `hasKey` pseqIdKey
   , n_val_args == 2
   = do { (wrap, expr, args) <- tcSeq loc fun_id args res_ty
        ; return (wrap, expr, args) }
@@ -1875,6 +1869,7 @@ the users that complain.
 tcSeq :: SrcSpan -> Name -> [LHsExprArgIn]
       -> ExpRhoType -> TcM (HsWrapper, LHsExpr GhcTcId, [LHsExprArgOut])
 -- (seq e1 e2) :: res_ty
+-- (pseq e1 e2) :: res_ty
 -- We need a special typing rule because res_ty can be unboxed
 -- See Note [Typing rule for seq]
 tcSeq loc fun_name args res_ty

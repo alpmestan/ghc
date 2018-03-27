@@ -3,10 +3,11 @@
 module Main where
 
 import Debug.Trace
+import GHC.Conc
 
 {-# NOINLINE f #-}
 f :: a -> b -> (# a,b #)
-f x y = x `seq` y `seq` (# x,y #)
+f x y = x `pseq` y `pseq` (# x,y #)
 
 g :: Int -> Int -> Int
 g v w = case f v w of

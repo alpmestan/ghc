@@ -238,5 +238,5 @@ findToolDir top_dir = go 0 (top_dir </> "..")
                 then return path
                 else go (k+1) (path </> "..")
 #else
-findToolDir = panic "getToolDir should only be called on Windows"
+findToolDir = panic "findToolDir should only be called on Windows"
 #endif

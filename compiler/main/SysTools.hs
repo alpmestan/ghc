@@ -134,7 +134,7 @@ initSysTools mbMinusB
              -- see Note [topdir: How GHC finds its files]
              -- NB: top_dir is assumed to be in standard Unix
              -- format, '/' separated
-       tool_dir <- findToolDir top_dir
+       mtool_dir <- findToolDir top_dir
              -- see Note [tooldir: How GHC finds mingw and perl on Windows]
 
        let settingsFile = top_dir </> "settings"
@@ -160,7 +160,7 @@ initSysTools mbMinusB
        let getSetting key = case lookup key mySettings of
                             Just xs -> return $ expandTopDir top_dir xs
                             Nothing -> pgmError ("No entry for " ++ show key ++ " in " ++ show settingsFile)
-           getToolSetting key = expandToolDir tool_dir <$> getSetting key
+           getToolSetting key = expandToolDir mtool_dir <$> getSetting key
            getBooleanSetting key = case lookup key mySettings of
                                    Just "YES" -> return True
                                    Just "NO" -> return False

@@ -91,9 +91,10 @@ expandTopDir = expandPathVar "topdir"
 
 -- | Expand occurrences of the @$tooldir@ interpolation in a string
 -- on Windows, leave the string untouched otherwise.
-expandToolDir :: FilePath -> String -> String
+expandToolDir :: Maybe FilePath -> String -> String
 #if defined(mingw32_HOST_OS)
-expandToolDir = expandPathVar "tooldir"
+expandToolDir (Just tool_dir) s = expandPathVar "tooldir" tool_dir s
+expandToolDir Nothing         _ = panic "Could not determine $tooldir"
 #else
 expandToolDir _ s = s
 #endif
@@ -223,9 +224,12 @@ getBaseDir = return Nothing
 #endif
 
 -- See Note [tooldir: How GHC finds mingw and perl on Windows]
+-- Returns @Nothing@ when not on Windows.
+-- When called on Windows, it either throws an error when the
+-- tooldir can't be located, or returns @Just tooldirpath@.
 findToolDir
   :: FilePath -- ^ topdir
-  -> IO FilePath
+  -> IO (Maybe FilePath)
 #if defined(mingw32_HOST_OS)
 findToolDir top_dir = go 0 (top_dir </> "..")
   where maxDepth = 2
@@ -235,8 +239,8 @@ findToolDir top_dir = go 0 (top_dir </> "..")
           | otherwise = do
               oneLevel <- doesDirectoryExist (path </> "mingw")
               if oneLevel
-                then return path
+                then return (Just path)
                 else go (k+1) (path </> "..")
 #else
-findToolDir = panic "findToolDir should only be called on Windows"
+findToolDir _ = Nothing
 #endif

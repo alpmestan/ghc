@@ -233,6 +233,7 @@ findToolDir
 #if defined(mingw32_HOST_OS)
 findToolDir top_dir = go 0 (top_dir </> "..")
   where maxDepth = 2
+        go :: Int -> FilePath -> IO (Maybe FilePath)
         go k path
           | k == maxDepth = throwGhcExceptionIO $
               InstallationError "could not detect mingw toolchain"

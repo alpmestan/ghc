@@ -242,5 +242,5 @@ findToolDir top_dir = go 0 (top_dir </> "..")
                 then return (Just path)
                 else go (k+1) (path </> "..")
 #else
-findToolDir _ = Nothing
+findToolDir _ = return Nothing
 #endif

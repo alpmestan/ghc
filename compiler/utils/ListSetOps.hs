@@ -52,11 +52,9 @@ deleteBys eq xs ys = foldl (flip (deleteBy eq)) xs ys
 -}
 
 
-unionLists :: (Outputable a, Eq a) => [a] -> [a] -> [a]
--- Assumes that the arguments contain no duplicates
+unionLists :: (Outputable a, Ord a) => [a] -> [a] -> [a]
 unionLists xs ys
-  = WARN(lengthExceeds xs 100 || lengthExceeds ys 100, ppr xs $$ ppr ys)
-    [x | x <- xs, isn'tIn "unionLists" x ys] ++ ys
+  = S.toList $ S.fromList (xs ++ ys)
 
 -- | Calculate the set difference of two lists. This is
 -- /O((m + n) log n)/, where we subtract a list of /n/ elements

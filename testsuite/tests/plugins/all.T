@@ -45,8 +45,7 @@ test('plugins09',
      run_command, ['$MAKE -s --no-print-directory plugins09'])
 
 test('plugins10',
-     [expect_broken(15216),
-      extra_files(['simple-plugin/', 'QuasiQuotation.hs']),
+     [extra_files(['simple-plugin/', 'QuasiQuotation.hs']),
       pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins10 TOP={top}')],
      run_command, ['$MAKE -s --no-print-directory plugins10'])
 

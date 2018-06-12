@@ -716,29 +716,34 @@ getLinkDeps hsc_env hpt pls replace_osuf span mods
 
     get_linkable osuf mod_name      -- A home-package module
         | Just mod_info <- lookupHpt hpt mod_name
-        = adjust_linkable (Maybes.expectJust "getLinkDeps" (hm_linkable mod_info))
+        = putStrLn "~~~" >> putStrLn ("found in HPT: " ++ moduleNameString mod_name ++ ", osuf = " ++ osuf) >> adjust_linkable (Maybes.expectJust "getLinkDeps" (hm_linkable mod_info))
         | otherwise
         = do    -- It's not in the HPT because we are in one shot mode,
                 -- so use the Finder to get a ModLocation...
+             putStrLn "~~~"
+             putStrLn ("not in HPT, looking for with the Finder: " ++ moduleNameString mod_name ++ ", osuf = " ++ osuf)
              mb_stuff <- findHomeModule hsc_env mod_name
              case mb_stuff of
-                  Found loc mod -> found loc mod
-                  _ -> no_obj mod_name
+                  Found loc mod -> putStrLn "home module found" >> found loc mod
+                  _ -> putStrLn "home module not found" >> no_obj mod_name
         where
             found loc mod = do {
                 -- ...and then find the linkable for it
+               putStrLn ("looking for linkable for " ++ moduleStableString mod) ;
                mb_lnk <- findObjectLinkableMaybe mod loc ;
                case mb_lnk of {
-                  Nothing  -> no_obj mod ;
-                  Just lnk -> adjust_linkable lnk
+                  Nothing  -> putStrLn "no linkable found" >> no_obj mod ;
+                  Just lnk -> putStrLn "linkable found" >> adjust_linkable lnk
               }}
 
             adjust_linkable lnk
                 | Just new_osuf <- replace_osuf = do
                         new_uls <- mapM (adjust_ul new_osuf)
                                         (linkableUnlinked lnk)
+                        putStrLn "~~~"
                         return lnk{ linkableUnlinked=new_uls }
-                | otherwise =
+                | otherwise = do
+                        putStrLn "~~~"
                         return lnk
 
             adjust_ul new_osuf (DotO file) = do

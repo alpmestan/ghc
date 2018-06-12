@@ -46,8 +46,10 @@ import Outputable
 import Maybes           ( expectJust )
 
 import Data.IORef       ( IORef, readIORef, atomicModifyIORef' )
+import Data.List        ( intercalate )
 import System.Directory
 import System.FilePath
+import System.IO        ( hPutStrLn, stderr )
 import Control.Monad
 import Data.Time
 import Data.List        ( foldl' )
@@ -251,7 +253,15 @@ uncacheModule hsc_env mod_name = do
 
 findHomeModule :: HscEnv -> ModuleName -> IO FindResult
 findHomeModule hsc_env mod_name = do
+  hPutStrLn stderr "================"
   r <- findInstalledHomeModule hsc_env mod_name
+  hPutStrLn stderr $ "findInstalledHomeModule: " ++
+    (case r of
+       InstalledFound loc _ -> "found " ++ show loc
+       InstalledNoPackage _ -> "no package"
+       InstalledNotFound fps _ -> "not found " ++ show fps
+    )
+  hPutStrLn stderr "================"
   return $ case r of
     InstalledFound loc _ -> Found loc (mkModule uid mod_name)
     InstalledNoPackage _ -> NoPackage uid -- impossible
@@ -314,7 +324,11 @@ findInstalledHomeModule hsc_env mod_name =
   -- is a home module).
   if mod `installedModuleEq` gHC_PRIM
         then return (InstalledFound (error "GHC.Prim ModLocation") mod)
-        else searchPathExts home_path mod exts
+        else do hPutStrLn stderr ("home_path = " ++ intercalate ":" home_path)
+                hPutStrLn stderr ("one shot = " ++ show (isOneShot (ghcMode dflags)))
+                hPutStrLn stderr ("hi_exts = " ++ show (map fst hi_exts))
+                hPutStrLn stderr ("source_exts = " ++ show (map fst source_exts))
+                searchPathExts home_path mod exts
 
 
 -- | Search for a module in external packages only.
@@ -409,6 +423,7 @@ searchPathExts paths mod exts
     search [] = return (InstalledNotFound (map fst to_search) (Just (installedModuleUnitId mod)))
 
     search ((file, mk_result) : rest) = do
+      hPutStrLn stderr ("Trying file = " ++ file)
       b <- doesFileExist file
       if b
         then do { loc <- mk_result; return (InstalledFound loc mod) }

@@ -32,21 +32,22 @@ import Platform
 -- | Top level driver for C-- pipeline
 -----------------------------------------------------------------------------
 
-cmmPipeline  :: HscEnv -- Compilation env including
-                       -- dynamic flags: -dcmm-lint -ddump-cmm-cps
-             -> TopSRT     -- SRT table and accumulating list of compiled procs
-             -> CmmGroup             -- Input C-- with Procedures
-             -> IO (TopSRT, CmmGroup) -- Output CPS transformed C--
+cmmPipeline
+ :: HscEnv -- Compilation env including
+           -- dynamic flags: -dcmm-lint -ddump-cmm-cps
+ -> ModuleSRTInfo        -- Info about SRTs generated so far
+ -> CmmGroup             -- Input C-- with Procedures
+ -> IO (ModuleSRTInfo, CmmGroup) -- Output CPS transformed C--
 
-cmmPipeline hsc_env topSRT prog =
+cmmPipeline hsc_env srtInfo prog =
   do let dflags = hsc_dflags hsc_env
 
      tops <- {-# SCC "tops" #-} mapM (cpsTop hsc_env) prog
 
-     (topSRT, cmms) <- {-# SCC "doSRTs" #-} doSRTs dflags topSRT tops
+     (srtInfo, cmms) <- {-# SCC "doSRTs" #-} doSRTs dflags srtInfo tops
      dumpWith dflags Opt_D_dump_cmm_cps "Post CPS Cmm" (ppr cmms)
 
-     return (topSRT, cmms)
+     return (srtInfo, cmms)
 
 
 cpsTop :: HscEnv -> CmmDecl -> IO (CAFEnv, [CmmDecl])
@@ -68,7 +69,7 @@ cpsTop hsc_env proc =
 
        ----------- Eliminate common blocks -------------------------------------
        g <- {-# SCC "elimCommonBlocks" #-}
-            condPass Opt_CmmElimCommonBlocks (elimCommonBlocks dflags) g
+            condPass Opt_CmmElimCommonBlocks elimCommonBlocks g
                           Opt_D_dump_cmm_cbe "Post common block elimination"
 
        -- Any work storing block Labels must be performed _after_
@@ -105,7 +106,7 @@ cpsTop hsc_env proc =
                      Opt_D_dump_cmm_sink "Sink assignments"
 
        ------------- CAF analysis ----------------------------------------------
-       let cafEnv = {-# SCC "cafAnal" #-} cafAnal g
+       let cafEnv = {-# SCC "cafAnal" #-} cafAnal call_pps l g
        dumpWith dflags Opt_D_dump_cmm_caf "CAFEnv" (ppr cafEnv)
 
        g <- if splitting_proc_points

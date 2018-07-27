@@ -147,10 +147,10 @@ instance Instruction instr => Instruction (InstrSR instr) where
         mkJumpInstr target      = map Instr (mkJumpInstr target)
 
         mkStackAllocInstr platform amount =
-             Instr (mkStackAllocInstr platform amount)
+             Instr <$> mkStackAllocInstr platform amount
 
         mkStackDeallocInstr platform amount =
-             Instr (mkStackDeallocInstr platform amount)
+             Instr <$> mkStackDeallocInstr platform amount
 
 
 -- | An instruction with liveness information.
@@ -1008,5 +1008,3 @@ liveness1 platform liveregs blockmap (LiveInstr instr _)
             r_dying_br  = nonDetEltsUniqSet (mkUniqSet r_dying `unionUniqSets`
                                              live_branch_only)
                           -- See Note [Unique Determinism and code generation]
-
-

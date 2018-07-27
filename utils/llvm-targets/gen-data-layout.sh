@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # llvm-target generator
 #
@@ -16,17 +16,33 @@
 # Add missing targets to the list below to have them included in
 # llvm-targets file.
 
-# Target sets
-WINDOWS_x86="i386-unknown-windows i686-unknown-windows x86_64-unknown-windows"
-LINUX_ARM="arm-unknown-linux-gnueabihf armv6-unknown-linux-gnueabihf armv7-unknown-linux-gnueabihf aarch64-unknown-linux-gnu aarch64-unknown-linux armv7a-unknown-linux-gnueabi"
-LINUX_x86="i386-unknown-linux-gnu i386-unknown-linux x86_64-unknown-linux-gnu x86_64-unknown-linux"
-ANDROID="armv7-unknown-linux-androideabi aarch64-unknown-linux-android"
-QNX="arm-unknown-nto-qnx-eabi"
-MACOS="i386-apple-darwin x86_64-apple-darwin"
-IOS="armv7-apple-ios arm64-apple-ios i386-apple-ios x86_64-apple-ios"
+# Target sets for which to generate the llvm-targets file
+TARGETS=(
+    # Windows x86
+    "i386-unknown-windows" "i686-unknown-windows" "x86_64-unknown-windows"
 
-# targets for which to generate the llvm-targets file
-TARGETS="${WINDOWS_x86} ${LINUX_ARM} ${LINUX_x86} ${ANDROID} ${QNX} ${MACOS} ${IOS}"
+    # Linux ARM
+    "arm-unknown-linux-gnueabihf" "armv6-unknown-linux-gnueabihf" "armv6l-unknown-linux-gnueabihf"
+    "armv7-unknown-linux-gnueabihf" "armv7a-unknown-linux-gnueabi" "armv7l-unknown-linux-gnueabihf"
+    "aarch64-unknown-linux-gnu" "aarch64-unknown-linux"
+    # Linux x86
+    "i386-unknown-linux-gnu" "i386-unknown-linux" "x86_64-unknown-linux-gnu" "x86_64-unknown-linux"
+    # Linux Android
+    "armv7-unknown-linux-androideabi" "aarch64-unknown-linux-android"
+    # Linux ppc64le
+    "powerpc64le-unknown-linux"
+
+    # QNX
+    "arm-unknown-nto-qnx-eabi"
+
+    # macOS
+    "i386-apple-darwin" "x86_64-apple-darwin"
+    # iOS
+    "armv7-apple-ios arm64-apple-ios" "i386-apple-ios x86_64-apple-ios"
+
+    # FreeBSD ARM
+    "aarch64-unknown-freebsd" "armv6-unknown-freebsd-gnueabihf" "armv7-unknown-freebsd-gnueabihf"
+)
 
 # given the call to clang -c11 that clang --target -v generates,
 # parse the -target-cpu <CPU> and -target-feature <feature> from
@@ -55,14 +71,14 @@ function get_cpu_and_attr() {
     done
 }
 
-# first marker to discrimiate the first line being outputted.
+# first marker to discriminate the first line being outputted.
 FST=1
 # a dummy file to use for the clang invocation.
 FILE=_____dummy.c
 touch $FILE
 
-for target in $TARGETS; do
-    # find the cpu and attributes emitte by clang for the given $target
+for target in "${TARGETS[@]}"; do
+    # find the cpu and attributes emitted by clang for the given $target
     CPU=""
     ATTR=()
     args=$(clang --target=$target -S $FILE -o /dev/null -v 2>&1 |grep $FILE)

@@ -74,9 +74,13 @@ import Data.Maybe ( catMaybes )
 
 ----------------
 toIfaceTvBndr :: TyVar -> IfaceTvBndr
-toIfaceTvBndr tyvar   = ( occNameFS (getOccName tyvar)
-                        , toIfaceKind (tyVarKind tyvar)
-                        )
+toIfaceTvBndr = toIfaceTvBndrX emptyVarSet
+
+toIfaceTvBndrX :: VarSet -> TyVar -> IfaceTvBndr
+toIfaceTvBndrX fr tyvar = ( occNameFS (getOccName tyvar)
+                          , toIfaceTypeX fr (tyVarKind tyvar)
+                          )
+
 
 toIfaceIdBndr :: Id -> (IfLclName, IfaceType)
 toIfaceIdBndr id      = (occNameFS (getOccName id),    toIfaceType (idType id))
@@ -118,9 +122,14 @@ toIfaceTypeX :: VarSet -> Type -> IfaceType
 toIfaceTypeX fr (TyVarTy tv)   -- See Note [TcTyVars in IfaceType] in IfaceType
   | tv `elemVarSet` fr         = IfaceFreeTyVar tv
   | otherwise                  = IfaceTyVar (toIfaceTyVar tv)
-toIfaceTypeX fr (AppTy t1 t2)  = IfaceAppTy (toIfaceTypeX fr t1) (toIfaceTypeX fr t2)
+toIfaceTypeX fr ty@(AppTy {})  =
+  -- Flatten as many argument AppTys as possible, then turn them into an
+  -- IfaceAppArgs list.
+  -- See Note [Suppressing invisible arguments] in IfaceType.
+  let (head, args) = splitAppTys ty
+  in IfaceAppTy (toIfaceTypeX fr head) (toIfaceAppTyArgsX fr head args)
 toIfaceTypeX _  (LitTy n)      = IfaceLitTy (toIfaceTyLit n)
-toIfaceTypeX fr (ForAllTy b t) = IfaceForAllTy (toIfaceForAllBndr b)
+toIfaceTypeX fr (ForAllTy b t) = IfaceForAllTy (toIfaceForAllBndrX fr b)
                                                (toIfaceTypeX (fr `delVarSet` binderVar b) t)
 toIfaceTypeX fr (FunTy t1 t2)
   | isPredTy t1                 = IfaceDFunTy (toIfaceTypeX fr t1) (toIfaceTypeX fr t2)
@@ -160,7 +169,10 @@ toIfaceCoVar :: CoVar -> FastString
 toIfaceCoVar = occNameFS . getOccName
 
 toIfaceForAllBndr :: TyVarBinder -> IfaceForAllBndr
-toIfaceForAllBndr (TvBndr v vis) = TvBndr (toIfaceTvBndr v) vis
+toIfaceForAllBndr = toIfaceForAllBndrX emptyVarSet
+
+toIfaceForAllBndrX :: VarSet -> TyVarBinder -> IfaceForAllBndr
+toIfaceForAllBndrX fr (TvBndr v vis) = TvBndr (toIfaceTvBndrX fr v) vis
 
 ----------------
 toIfaceTyCon :: TyCon -> IfaceTyCon
@@ -214,18 +226,23 @@ toIfaceCoercionX :: VarSet -> Coercion -> IfaceCoercion
 toIfaceCoercionX fr co
   = go co
   where
-    go (Refl r ty)          = IfaceReflCo r (toIfaceTypeX fr ty)
+    go_mco MRefl     = IfaceMRefl
+    go_mco (MCo co)  = IfaceMCo $ go co
+
+    go (Refl ty)            = IfaceReflCo (toIfaceTypeX fr ty)
+    go (GRefl r ty mco)     = IfaceGReflCo r (toIfaceTypeX fr ty) (go_mco mco)
     go (CoVarCo cv)
       -- See [TcTyVars in IfaceType] in IfaceType
       | cv `elemVarSet` fr  = IfaceFreeCoVar cv
-      | otherwise           = IfaceCoVarCo  (toIfaceCoVar cv)
+      | otherwise           = IfaceCoVarCo (toIfaceCoVar cv)
+    go (HoleCo h)           = IfaceHoleCo  (coHoleCoVar h)
+
     go (AppCo co1 co2)      = IfaceAppCo  (go co1) (go co2)
     go (SymCo co)           = IfaceSymCo (go co)
     go (TransCo co1 co2)    = IfaceTransCo (go co1) (go co2)
-    go (NthCo d co)         = IfaceNthCo d (go co)
+    go (NthCo _r d co)      = IfaceNthCo d (go co)
     go (LRCo lr co)         = IfaceLRCo lr (go co)
     go (InstCo co arg)      = IfaceInstCo (go co) (go arg)
-    go (CoherenceCo c1 c2)  = IfaceCoherenceCo (go c1) (go c2)
     go (KindCo c)           = IfaceKindCo (go c)
     go (SubCo co)           = IfaceSubCo (go co)
     go (AxiomRuleCo co cs)  = IfaceAxiomRuleCo (coaxrName co) (map go cs)
@@ -250,13 +267,18 @@ toIfaceCoercionX fr co
     go_prov (PhantomProv co)    = IfacePhantomProv (go co)
     go_prov (ProofIrrelProv co) = IfaceProofIrrelProv (go co)
     go_prov (PluginProv str)    = IfacePluginProv str
-    go_prov (HoleProv h)        = IfaceHoleProv (chUnique h)
 
-toIfaceTcArgs :: TyCon -> [Type] -> IfaceTcArgs
+toIfaceTcArgs :: TyCon -> [Type] -> IfaceAppArgs
 toIfaceTcArgs = toIfaceTcArgsX emptyVarSet
 
-toIfaceTcArgsX :: VarSet -> TyCon -> [Type] -> IfaceTcArgs
--- See Note [Suppressing invisible arguments]
+toIfaceTcArgsX :: VarSet -> TyCon -> [Type] -> IfaceAppArgs
+toIfaceTcArgsX fr tc ty_args = toIfaceAppArgsX fr (tyConKind tc) ty_args
+
+toIfaceAppTyArgsX :: VarSet -> Type -> [Type] -> IfaceAppArgs
+toIfaceAppTyArgsX fr ty ty_args = toIfaceAppArgsX fr (typeKind ty) ty_args
+
+toIfaceAppArgsX :: VarSet -> Kind -> [Type] -> IfaceAppArgs
+-- See Note [Suppressing invisible arguments] in IfaceType
 -- We produce a result list of args describing visibility
 -- The awkward case is
 --    T :: forall k. * -> k
@@ -264,34 +286,34 @@ toIfaceTcArgsX :: VarSet -> TyCon -> [Type] -> IfaceTcArgs
 --    T (forall j. blah) * blib
 -- Is 'blib' visible?  It depends on the visibility flag on j,
 -- so we have to substitute for k.  Annoying!
-toIfaceTcArgsX fr tc ty_args
-  = go (mkEmptyTCvSubst in_scope) (tyConKind tc) ty_args
+toIfaceAppArgsX fr kind ty_args
+  = go (mkEmptyTCvSubst in_scope) kind ty_args
   where
     in_scope = mkInScopeSet (tyCoVarsOfTypes ty_args)
 
-    go _   _                   []     = ITC_Nil
+    go _   _                   []     = IA_Nil
     go env ty                  ts
       | Just ty' <- coreView ty
       = go env ty' ts
     go env (ForAllTy (TvBndr tv vis) res) (t:ts)
-      | isVisibleArgFlag vis = ITC_Vis   t' ts'
-      | otherwise            = ITC_Invis t' ts'
+      | isVisibleArgFlag vis = IA_Vis   t' ts'
+      | otherwise            = IA_Invis t' ts'
       where
         t'  = toIfaceTypeX fr t
         ts' = go (extendTvSubst env tv t) res ts
 
     go env (FunTy _ res) (t:ts) -- No type-class args in tycon apps
-      = ITC_Vis (toIfaceTypeX fr t) (go env res ts)
+      = IA_Vis (toIfaceTypeX fr t) (go env res ts)
 
-    go env (TyVarTy tv) ts
-      | Just ki <- lookupTyVar env tv = go env ki ts
-    go env kind (t:ts) = WARN( True, ppr tc $$ ppr (tyConKind tc) $$ ppr ty_args )
-                         ITC_Vis (toIfaceTypeX fr t) (go env kind ts) -- Ill-kinded
+    go env ty ts = ASSERT2( not (isEmptyTCvSubst env)
+                          , ppr kind $$ ppr ty_args )
+                   go (zapTCvSubst env) (substTy env ty) ts
+        -- See Note [Care with kind instantiation] in Type.hs
 
 tidyToIfaceType :: TidyEnv -> Type -> IfaceType
 tidyToIfaceType env ty = toIfaceType (tidyType env ty)
 
-tidyToIfaceTcArgs :: TidyEnv -> TyCon -> [Type] -> IfaceTcArgs
+tidyToIfaceTcArgs :: TidyEnv -> TyCon -> [Type] -> IfaceAppArgs
 tidyToIfaceTcArgs env tc tys = toIfaceTcArgs tc (tidyTypes env tys)
 
 tidyToIfaceContext :: TidyEnv -> ThetaType -> IfaceContext
@@ -436,8 +458,15 @@ toIfUnfolding lb (DFunUnfolding { df_bndrs = bndrs, df_args = args })
       -- No need to serialise the data constructor;
       -- we can recover it from the type of the dfun
 
-toIfUnfolding _ _
-  = Nothing
+toIfUnfolding _ (OtherCon {}) = Nothing
+  -- The binding site of an Id doesn't have OtherCon, except perhaps
+  -- where we have called zapUnfolding; and that evald'ness info is
+  -- not needed by importing modules
+
+toIfUnfolding _ BootUnfolding = Nothing
+  -- Can't happen; we only have BootUnfolding for imported binders
+
+toIfUnfolding _ NoUnfolding = Nothing
 
 {-
 ************************************************************************
@@ -520,14 +549,17 @@ mkIfaceApps f as = foldl (\f a -> IfaceApp f (toIfaceExpr a)) f as
 ---------------------
 toIfaceVar :: Id -> IfaceExpr
 toIfaceVar v
-    | Just fcall <- isFCallId_maybe v            = IfaceFCall fcall (toIfaceType (idType v))
-       -- Foreign calls have special syntax
     | isBootUnfolding (idUnfolding v)
-    = IfaceApp (IfaceApp (IfaceExt noinlineIdName) (IfaceType (toIfaceType (idType v))))
+    = -- See Note [Inlining and hs-boot files]
+      IfaceApp (IfaceApp (IfaceExt noinlineIdName)
+                         (IfaceType (toIfaceType (idType v))))
                (IfaceExt name) -- don't use mkIfaceApps, or infinite loop
-       -- See Note [Inlining and hs-boot files]
-    | isExternalName name                        = IfaceExt name
-    | otherwise                                  = IfaceLcl (getOccFS name)
+
+    | Just fcall <- isFCallId_maybe v = IfaceFCall fcall (toIfaceType (idType v))
+                                      -- Foreign calls have special syntax
+
+    | isExternalName name             = IfaceExt name
+    | otherwise                       = IfaceLcl (getOccFS name)
   where name = idName v
 
 

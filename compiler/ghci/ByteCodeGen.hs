@@ -47,9 +47,7 @@ import Unique
 import FastString
 import Panic
 import StgCmmClosure    ( NonVoid(..), fromNonVoid, nonVoidIds )
-import StgCmmLayout     ( ArgRep(..), FieldOffOrPadding(..),
-                          toArgRep, argRepSizeW,
-                          mkVirtHeapOffsetsWithPadding, mkVirtConstrOffsets )
+import StgCmmLayout
 import SMRep hiding (WordOff, ByteOff, wordsToBytes)
 import Bitmap
 import OrdList
@@ -75,6 +73,7 @@ import qualified Data.IntMap as IntMap
 import qualified FiniteMap as Map
 import Data.Ord
 import GHC.Stack.CCS
+import Data.Either ( partitionEithers )
 
 -- -----------------------------------------------------------------------------
 -- Generating byte code for a complete module
@@ -91,10 +90,10 @@ byteCodeGen hsc_env this_mod binds tycs mb_modBreaks
                 (const ()) $ do
         -- Split top-level binds into strings and others.
         -- See Note [generating code for top-level string literal bindings].
-        let (strings, flatBinds) = splitEithers $ do
+        let (strings, flatBinds) = partitionEithers $ do
                 (bndr, rhs) <- flattenBinds binds
-                return $ case rhs of
-                    Lit (MachStr str) -> Left (bndr, str)
+                return $ case exprIsTickedString_maybe rhs of
+                    Just str -> Left (bndr, str)
                     _ -> Right (bndr, simpleFreeVars rhs)
         stringPtrs <- allocateTopStrings hsc_env strings
 
@@ -801,9 +800,8 @@ mkConAppCode orig_d _ p con args_r_to_l =
                 , let prim_rep = atomPrimRep arg
                 , not (isVoidRep prim_rep)
                 ]
-            is_thunk = False
             (_, _, args_offsets) =
-                mkVirtHeapOffsetsWithPadding dflags is_thunk non_voids
+                mkVirtHeapOffsetsWithPadding dflags StdHeader non_voids
 
             do_pushery !d (arg : args) = do
                 (push, arg_bytes) <- case arg of
@@ -962,10 +960,15 @@ doCase d s p (_,scrut) bndr alts is_unboxed_tuple
            | null real_bndrs = do
                 rhs_code <- schemeE d_alts s p_alts rhs
                 return (my_discr alt, rhs_code)
+           -- If an alt attempts to match on an unboxed tuple or sum, we must
+           -- bail out, as the bytecode compiler can't handle them.
+           -- (See Trac #14608.)
+           | any (\bndr -> typePrimRep (idType bndr) `lengthExceeds` 1) bndrs
+           = multiValException
            -- algebraic alt with some binders
            | otherwise =
              let (tot_wds, _ptrs_wds, args_offsets) =
-                     mkVirtConstrOffsets dflags
+                     mkVirtHeapOffsets dflags NoHeader
                          [ NonVoid (bcIdPrimRep id, id)
                          | NonVoid id <- nonVoidIds real_bndrs
                          ]
@@ -975,7 +978,7 @@ doCase d s p (_,scrut) bndr alts is_unboxed_tuple
 
                  -- convert offsets from Sp into offsets into the virtual stack
                  p' = Map.insertList
-                        [ (arg, stack_bot + wordSize dflags - ByteOff offset)
+                        [ (arg, stack_bot - ByteOff offset)
                         | (NonVoid arg, offset) <- args_offsets ]
                         p_alts
              in do
@@ -993,8 +996,8 @@ doCase d s p (_,scrut) bndr alts is_unboxed_tuple
            | otherwise
            = DiscrP (fromIntegral (dataConTag dc - fIRST_TAG))
         my_discr (LitAlt l, _, _)
-           = case l of MachInt i     -> DiscrI (fromInteger i)
-                       MachWord w    -> DiscrW (fromInteger w)
+           = case l of LitNumber LitNumInt i  _  -> DiscrI (fromInteger i)
+                       LitNumber LitNumWord w _  -> DiscrW (fromInteger w)
                        MachFloat r   -> DiscrF (fromRational r)
                        MachDouble r  -> DiscrD (fromRational r)
                        MachChar i    -> DiscrI (ord i)
@@ -1230,7 +1233,7 @@ generateCCall d0 s p (CCallSpec target cconv safety) fn args_r_to_l
          push_r =
              if returns_void
                 then nilOL
-                else unitOL (PUSH_UBX (mkDummyLiteral r_rep) (trunc16W r_sizeW))
+                else unitOL (PUSH_UBX (mkDummyLiteral dflags r_rep) (trunc16W r_sizeW))
 
          -- generate the marshalling code we're going to call
 
@@ -1294,16 +1297,16 @@ primRepToFFIType dflags r
 
 -- Make a dummy literal, to be used as a placeholder for FFI return
 -- values on the stack.
-mkDummyLiteral :: PrimRep -> Literal
-mkDummyLiteral pr
+mkDummyLiteral :: DynFlags -> PrimRep -> Literal
+mkDummyLiteral dflags pr
    = case pr of
-        IntRep    -> MachInt 0
-        WordRep   -> MachWord 0
+        IntRep    -> mkMachInt dflags 0
+        WordRep   -> mkMachWord dflags 0
+        Int64Rep  -> mkMachInt64 0
+        Word64Rep -> mkMachWord64 0
         AddrRep   -> MachNullAddr
         DoubleRep -> MachDouble 0
         FloatRep  -> MachFloat 0
-        Int64Rep  -> MachInt64 0
-        Word64Rep -> MachWord64 0
         _         -> pprPanic "mkDummyLiteral" (ppr pr)
 
 
@@ -1502,11 +1505,11 @@ pushAtom d p (AnnVar var)
 
    | otherwise  -- var must be a global variable
    = do topStrings <- getTopStrings
+        dflags <- getDynFlags
         case lookupVarEnv topStrings var of
-            Just ptr -> pushAtom d p $ AnnLit $ MachWord $ fromIntegral $
-              ptrToWordPtr $ fromRemotePtr ptr
+            Just ptr -> pushAtom d p $ AnnLit $ mkMachWord dflags $
+              fromIntegral $ ptrToWordPtr $ fromRemotePtr ptr
             Nothing -> do
-                dflags <- getDynFlags
                 let sz = idSizeCon dflags var
                 MASSERT( sz == wordSize dflags )
                 return (unitOL (PUSH_G (getName var)), sz)
@@ -1521,19 +1524,21 @@ pushAtom _ _ (AnnLit lit) = do
 
      case lit of
         MachLabel _ _ _ -> code N
-        MachWord _    -> code N
-        MachInt _     -> code N
-        MachWord64 _  -> code L
-        MachInt64 _   -> code L
         MachFloat _   -> code F
         MachDouble _  -> code D
         MachChar _    -> code N
         MachNullAddr  -> code N
         MachStr _     -> code N
-        -- No LitInteger's should be left by the time this is called.
-        -- CorePrep should have converted them all to a real core
-        -- representation.
-        LitInteger {} -> panic "pushAtom: LitInteger"
+        LitNumber nt _ _ -> case nt of
+          LitNumInt     -> code N
+          LitNumWord    -> code N
+          LitNumInt64   -> code L
+          LitNumWord64  -> code L
+          -- No LitInteger's or LitNatural's should be left by the time this is
+          -- called. CorePrep should have converted them all to a real core
+          -- representation.
+          LitNumInteger -> panic "pushAtom: LitInteger"
+          LitNumNatural -> panic "pushAtom: LitNatural"
 
 pushAtom _ _ expr
    = pprPanic "ByteCodeGen.pushAtom"

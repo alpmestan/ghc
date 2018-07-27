@@ -1,3 +1,14 @@
+## 0.5.3 (edit as necessary)
+
+- Shipped with GHC 8.6.1
+
+- Added to `GHC.Prim`:
+        addWordC# :: Word# -> Word# -> (# Word#, Int# #)
+
+- `unpackClosure#` can now unpack any valid Haskell closure.
+  Previously it returned empty pointer and non-pointer arrays
+  for thunks.
+
 ## 0.5.2.0
 
 - Shipped with GHC 8.4.1
@@ -8,13 +19,47 @@
 
 - Don't allocate a thunk for each unpacked UTF-8 character in `unpackCStringUtf8#`
 
-## 0.5.1.0
+## 0.5.1.1 *November 2017*
+
+- Shipped with GHC 8.2.2
+
+- Changed strictness properties of `catchRetry#` (#14171)
+
+## 0.5.1.0 *July 2017*
 
 - Shipped with GHC 8.2.1
 
 - Added to `GHC.Prim`:
 
-        isPinnedByteArray# :: MutableByteArray# s -> Int#
+        fabsDouble# :: Double# -> Double#
+        fabsFloat# :: Float# -> Float#
+        isByteArrayPinned# :: ByteArray# -> Int#
+        isMutableByteArrayPinned# :: MutableByteArray# s -> Int#
+        anyToAddr# :: a -> State# (RealWorld) -> (# State# (RealWorld),Addr# #)
+
+- New primitives for compact regions in `GHC.Prim`:
+
+        Compact#
+        compactNew#
+        compactResize#
+        compactContains#
+        compactContainsAny#
+        compactGetFirstBlock#
+        compactGetNextBlock#
+        compactAllocateBlock#
+        compactFixupPointers#
+        compactAdd#
+        compactAddWithSharing#
+        compactSize#
+
+- Generalised `noDuplicate#` from
+
+        noDuplicate# :: State# (RealWorld) -> State# (RealWorld)
+
+    to
+
+        noDuplicate# :: State# s -> State# s
+
 
 ## 0.5.0.0
 

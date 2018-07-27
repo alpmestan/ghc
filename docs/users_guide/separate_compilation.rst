@@ -159,7 +159,7 @@ contents of the search path:
 
 .. ghc-flag:: -i⟨dir⟩[:⟨dir⟩]*
     :shortdesc: add ⟨dir⟩, ⟨dir2⟩, etc. to import path
-    :type: dynamic/ ``:set``
+    :type: dynamic
     :category: search-path
 
     .. index::
@@ -170,7 +170,7 @@ contents of the search path:
 
 .. ghc-flag:: -i
     :shortdesc: Empty the import directory list
-    :type: dynamic/ ``:set``
+    :type: dynamic
     :category: search-path
 
     resets the search path back to nothing.
@@ -541,6 +541,23 @@ The recompilation checker
     Recompilation checking normally stops compilation early, leaving an
     existing ``.o`` file in place, if it can be determined that the
     module does not need to be recompiled.
+
+.. ghc-flag:: -fignore-optim-changes
+    :shortdesc: Do not recompile modules just to match changes to
+        optimisation flags. This is especially useful for avoiding
+        recompilation when using GHCi, and is enabled by default for
+        GHCi.
+    :type: dynamic
+    :reverse: -fno-ignore-optim-changes
+    :category: recompilation
+
+.. ghc-flag:: -fignore-hpc-changes
+    :shortdesc: Do not recompile modules just to match changes to
+        HPC flags. This is especially useful for avoiding recompilation
+        when using GHCi, and is enabled by default for GHCi.
+    :type: dynamic
+    :reverse: -fno-ignore-hpc-changes
+    :category: recompilation
 
 In the olden days, GHC compared the newly-generated ``.hi`` file with
 the previous version; if they were identical, it left the old one alone

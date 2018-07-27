@@ -28,11 +28,12 @@ import Data.Either
 import Data.Function ( fix )
 import Data.Maybe
 import Data.Monoid ( Dual(..), Sum(..), Product(..)
-                   , First(..), Last(..), Alt(..) )
+                   , First(..), Last(..), Alt(..), Ap(..) )
+import Data.Ord ( Down(..) )
 import GHC.Base ( Monad, NonEmpty(..), errorWithoutStackTrace, (.) )
 import GHC.Generics
 import GHC.List ( head, tail )
-import GHC.ST
+import Control.Monad.ST.Imp
 import System.IO
 
 -- | Monads having fixed points with a \'knot-tying\' semantics.
@@ -126,6 +127,10 @@ instance MonadFix Last where
 instance MonadFix f => MonadFix (Alt f) where
     mfix f   = Alt (mfix (getAlt . f))
 
+-- | @since 4.12.0.0
+instance MonadFix f => MonadFix (Ap f) where
+    mfix f   = Ap (mfix (getAp . f))
+
 -- Instances for GHC.Generics
 -- | @since 4.9.0.0
 instance MonadFix Par1 where
@@ -145,3 +150,10 @@ instance (MonadFix f, MonadFix g) => MonadFix (f :*: g) where
       where
         fstP (a :*: _) = a
         sndP (_ :*: b) = b
+
+-- Instances for Data.Ord
+
+-- | @since 4.12.0.0
+instance MonadFix Down where
+    mfix f = Down (fix (getDown . f))
+      where getDown (Down x) = x

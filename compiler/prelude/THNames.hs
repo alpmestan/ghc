@@ -129,16 +129,14 @@ templateHaskellNames = [
     overlappableDataConName, overlappingDataConName, overlapsDataConName,
     incoherentDataConName,
     -- DerivStrategy
-    stockStrategyDataConName, anyclassStrategyDataConName,
-    newtypeStrategyDataConName,
+    stockStrategyName, anyclassStrategyName,
+    newtypeStrategyName, viaStrategyName,
     -- TExp
     tExpDataConName,
     -- RuleBndr
     ruleVarName, typedRuleVarName,
     -- FunDep
     funDepName,
-    -- FamFlavour
-    typeFamName, dataFamName,
     -- TySynEqn
     tySynEqnName,
     -- AnnTarget
@@ -158,7 +156,7 @@ templateHaskellNames = [
     patQTyConName, fieldPatQTyConName, fieldExpQTyConName, funDepTyConName,
     predQTyConName, decsQTyConName, ruleBndrQTyConName, tySynEqnQTyConName,
     roleTyConName, tExpTyConName, injAnnTyConName, kindQTyConName,
-    overlapTyConName, derivClauseQTyConName, derivStrategyTyConName,
+    overlapTyConName, derivClauseQTyConName, derivStrategyQTyConName,
 
     -- Quasiquoting
     quoteDecName, quoteTypeName, quoteExpName, quotePatName]
@@ -187,8 +185,7 @@ liftClassName = thCls (fsLit "Lift") liftClassKey
 qTyConName, nameTyConName, fieldExpTyConName, patTyConName,
     fieldPatTyConName, expTyConName, decTyConName, typeTyConName,
     matchTyConName, clauseTyConName, funDepTyConName, predTyConName,
-    tExpTyConName, injAnnTyConName, overlapTyConName,
-    derivStrategyTyConName :: Name
+    tExpTyConName, injAnnTyConName, overlapTyConName :: Name
 qTyConName             = thTc (fsLit "Q")              qTyConKey
 nameTyConName          = thTc (fsLit "Name")           nameTyConKey
 fieldExpTyConName      = thTc (fsLit "FieldExp")       fieldExpTyConKey
@@ -204,7 +201,6 @@ predTyConName          = thTc (fsLit "Pred")           predTyConKey
 tExpTyConName          = thTc (fsLit "TExp")           tExpTyConKey
 injAnnTyConName        = thTc (fsLit "InjectivityAnn") injAnnTyConKey
 overlapTyConName       = thTc (fsLit "Overlap")        overlapTyConKey
-derivStrategyTyConName = thTc (fsLit "DerivStrategy")  derivStrategyTyConKey
 
 returnQName, bindQName, sequenceQName, newNameName, liftName,
     mkNameName, mkNameG_vName, mkNameG_dName, mkNameG_tcName,
@@ -517,11 +513,6 @@ typedRuleVarName = libFun (fsLit ("typedRuleVar")) typedRuleVarIdKey
 funDepName :: Name
 funDepName     = libFun (fsLit "funDep") funDepIdKey
 
--- data FamFlavour = ...
-typeFamName, dataFamName :: Name
-typeFamName = libFun (fsLit "typeFam") typeFamIdKey
-dataFamName = libFun (fsLit "dataFam") dataFamIdKey
-
 -- data TySynEqn = ...
 tySynEqnName :: Name
 tySynEqnName = libFun (fsLit "tySynEqn") tySynEqnIdKey
@@ -536,12 +527,21 @@ moduleAnnotationName = libFun (fsLit "moduleAnnotation") moduleAnnotationIdKey
 derivClauseName :: Name
 derivClauseName = libFun (fsLit "derivClause") derivClauseIdKey
 
+-- data DerivStrategy = ...
+stockStrategyName, anyclassStrategyName, newtypeStrategyName,
+  viaStrategyName :: Name
+stockStrategyName    = libFun (fsLit "stockStrategy")    stockStrategyIdKey
+anyclassStrategyName = libFun (fsLit "anyclassStrategy") anyclassStrategyIdKey
+newtypeStrategyName  = libFun (fsLit "newtypeStrategy")  newtypeStrategyIdKey
+viaStrategyName      = libFun (fsLit "viaStrategy")      viaStrategyIdKey
+
 matchQTyConName, clauseQTyConName, expQTyConName, stmtQTyConName,
     decQTyConName, conQTyConName, bangTypeQTyConName,
     varBangTypeQTyConName, typeQTyConName, fieldExpQTyConName,
     patQTyConName, fieldPatQTyConName, predQTyConName, decsQTyConName,
     ruleBndrQTyConName, tySynEqnQTyConName, roleTyConName,
-    derivClauseQTyConName, kindQTyConName, tyVarBndrQTyConName :: Name
+    derivClauseQTyConName, kindQTyConName, tyVarBndrQTyConName,
+    derivStrategyQTyConName :: Name
 matchQTyConName         = libTc (fsLit "MatchQ")         matchQTyConKey
 clauseQTyConName        = libTc (fsLit "ClauseQ")        clauseQTyConKey
 expQTyConName           = libTc (fsLit "ExpQ")           expQTyConKey
@@ -562,6 +562,7 @@ roleTyConName           = libTc (fsLit "Role")           roleTyConKey
 derivClauseQTyConName   = libTc (fsLit "DerivClauseQ")   derivClauseQTyConKey
 kindQTyConName          = libTc (fsLit "KindQ")          kindQTyConKey
 tyVarBndrQTyConName     = libTc (fsLit "TyVarBndrQ")     tyVarBndrQTyConKey
+derivStrategyQTyConName = libTc (fsLit "DerivStrategyQ") derivStrategyQTyConKey
 
 -- quasiquoting
 quoteExpName, quotePatName, quoteDecName, quoteTypeName :: Name
@@ -597,13 +598,6 @@ overlappingDataConName  = thCon (fsLit "Overlapping")  overlappingDataConKey
 overlapsDataConName     = thCon (fsLit "Overlaps")     overlapsDataConKey
 incoherentDataConName   = thCon (fsLit "Incoherent")   incoherentDataConKey
 
--- data DerivStrategy = ...
-stockStrategyDataConName, anyclassStrategyDataConName,
-  newtypeStrategyDataConName :: Name
-stockStrategyDataConName    = thCon (fsLit "StockStrategy")    stockDataConKey
-anyclassStrategyDataConName = thCon (fsLit "AnyclassStrategy") anyclassDataConKey
-newtypeStrategyDataConName  = thCon (fsLit "NewtypeStrategy")  newtypeDataConKey
-
 {- *********************************************************************
 *                                                                      *
                      Class keys
@@ -633,7 +627,7 @@ expTyConKey, matchTyConKey, clauseTyConKey, qTyConKey, expQTyConKey,
     fieldPatQTyConKey, fieldExpQTyConKey, funDepTyConKey, predTyConKey,
     predQTyConKey, decsQTyConKey, ruleBndrQTyConKey, tySynEqnQTyConKey,
     roleTyConKey, tExpTyConKey, injAnnTyConKey, kindQTyConKey,
-    overlapTyConKey, derivClauseQTyConKey, derivStrategyTyConKey :: Unique
+    overlapTyConKey, derivClauseQTyConKey, derivStrategyQTyConKey :: Unique
 expTyConKey             = mkPreludeTyConUnique 200
 matchTyConKey           = mkPreludeTyConUnique 201
 clauseTyConKey          = mkPreludeTyConUnique 202
@@ -669,7 +663,7 @@ injAnnTyConKey          = mkPreludeTyConUnique 231
 kindQTyConKey           = mkPreludeTyConUnique 232
 overlapTyConKey         = mkPreludeTyConUnique 233
 derivClauseQTyConKey    = mkPreludeTyConUnique 234
-derivStrategyTyConKey   = mkPreludeTyConUnique 235
+derivStrategyQTyConKey  = mkPreludeTyConUnique 235
 
 {- *********************************************************************
 *                                                                      *
@@ -710,12 +704,6 @@ overlappableDataConKey = mkPreludeDataConUnique 209
 overlappingDataConKey  = mkPreludeDataConUnique 210
 overlapsDataConKey     = mkPreludeDataConUnique 211
 incoherentDataConKey   = mkPreludeDataConUnique 212
-
--- data DerivStrategy = ...
-stockDataConKey, anyclassDataConKey, newtypeDataConKey :: Unique
-stockDataConKey    = mkPreludeDataConUnique 213
-anyclassDataConKey = mkPreludeDataConUnique 214
-newtypeDataConKey  = mkPreludeDataConUnique 215
 
 {- *********************************************************************
 *                                                                      *
@@ -1031,11 +1019,6 @@ interruptibleIdKey = mkPreludeMiscIdUnique 432
 funDepIdKey :: Unique
 funDepIdKey = mkPreludeMiscIdUnique 440
 
--- data FamFlavour = ...
-typeFamIdKey, dataFamIdKey :: Unique
-typeFamIdKey = mkPreludeMiscIdUnique 450
-dataFamIdKey = mkPreludeMiscIdUnique 451
-
 -- data TySynEqn = ...
 tySynEqnIdKey :: Unique
 tySynEqnIdKey = mkPreludeMiscIdUnique 460
@@ -1061,6 +1044,14 @@ moduleAnnotationIdKey = mkPreludeMiscIdUnique 492
 -- type DerivPred = ...
 derivClauseIdKey :: Unique
 derivClauseIdKey = mkPreludeMiscIdUnique 493
+
+-- data DerivStrategy = ...
+stockStrategyIdKey, anyclassStrategyIdKey, newtypeStrategyIdKey,
+  viaStrategyIdKey :: Unique
+stockStrategyIdKey    = mkPreludeDataConUnique 494
+anyclassStrategyIdKey = mkPreludeDataConUnique 495
+newtypeStrategyIdKey  = mkPreludeDataConUnique 496
+viaStrategyIdKey      = mkPreludeDataConUnique 497
 
 {-
 ************************************************************************

@@ -20,10 +20,11 @@ nestDepth :: Int
 nestDepth = 4
 
 type Precedence = Int
-appPrec, unopPrec, opPrec, noPrec :: Precedence
-appPrec  = 3    -- Argument of a function application
-opPrec   = 2    -- Argument of an infix operator
-unopPrec = 1    -- Argument of an unresolved infix operator
+appPrec, opPrec, unopPrec, sigPrec, noPrec :: Precedence
+appPrec  = 4    -- Argument of a function application
+opPrec   = 3    -- Argument of an infix operator
+unopPrec = 2    -- Argument of an unresolved infix operator
+sigPrec  = 1    -- Argument of an explicit type signature
 noPrec   = 0    -- Others
 
 parensIf :: Bool -> Doc -> Doc
@@ -194,7 +195,8 @@ pprExp _ (CompE ss) =
         ss' = init ss
 pprExp _ (ArithSeqE d) = ppr d
 pprExp _ (ListE es) = brackets (commaSep es)
-pprExp i (SigE e t) = parensIf (i > noPrec) $ ppr e <+> dcolon <+> ppr t
+pprExp i (SigE e t) = parensIf (i > noPrec) $ pprExp sigPrec e
+                                          <+> dcolon <+> ppr t
 pprExp _ (RecConE nm fs) = ppr nm <> braces (pprFields fs)
 pprExp _ (RecUpdE e fs) = pprExp appPrec e <> braces (pprFields fs)
 pprExp i (StaticE e) = parensIf (i >= appPrec) $
@@ -219,8 +221,13 @@ instance Ppr Stmt where
 
 ------------------------------
 instance Ppr Match where
-    ppr (Match p rhs ds) = ppr p <+> pprBody False rhs
+    ppr (Match p rhs ds) = pprMatchPat p <+> pprBody False rhs
                         $$ where_clause ds
+
+pprMatchPat :: Pat -> Doc
+-- Everything except pattern signatures bind more tightly than (->)
+pprMatchPat p@(SigP {}) = parens (ppr p)
+pprMatchPat p           = ppr p
 
 ------------------------------
 pprGuarded :: Doc -> (Guard, Exp) -> Doc
@@ -381,11 +388,12 @@ ppr_dec _ (PatSynSigD name ty)
   = pprPatSynSig name ty
 
 ppr_deriv_strategy :: DerivStrategy -> Doc
-ppr_deriv_strategy ds = text $
+ppr_deriv_strategy ds =
   case ds of
-    StockStrategy    -> "stock"
-    AnyclassStrategy -> "anyclass"
-    NewtypeStrategy  -> "newtype"
+    StockStrategy    -> text "stock"
+    AnyclassStrategy -> text "anyclass"
+    NewtypeStrategy  -> text "newtype"
+    ViaStrategy ty   -> text "via" <+> pprParendType ty
 
 ppr_overlap :: Overlap -> Doc
 ppr_overlap o = text $
@@ -445,8 +453,16 @@ ppr_newtype maybeInst ctxt t argsDoc ksig c decs
 
 ppr_deriv_clause :: DerivClause -> Doc
 ppr_deriv_clause (DerivClause ds ctxt)
-  = text "deriving" <+> maybe empty ppr_deriv_strategy ds
+  = text "deriving" <+> pp_strat_before
                     <+> ppr_cxt_preds ctxt
+                    <+> pp_strat_after
+  where
+    -- @via@ is unique in that in comes /after/ the class being derived,
+    -- so we must special-case it.
+    (pp_strat_before, pp_strat_after) =
+      case ds of
+        Just (via@ViaStrategy{}) -> (empty, ppr_deriv_strategy via)
+        _                        -> (maybe empty ppr_deriv_strategy ds, empty)
 
 ppr_tySyn :: Doc -> Name -> Doc -> Type -> Doc
 ppr_tySyn maybeInst t argsDoc rhs
@@ -464,11 +480,6 @@ instance Ppr FunDep where
     ppr (FunDep xs ys) = hsep (map ppr xs) <+> text "->" <+> hsep (map ppr ys)
     ppr_list [] = empty
     ppr_list xs = bar <+> commaSep xs
-
-------------------------------
-instance Ppr FamFlavour where
-    ppr DataFam = text "data"
-    ppr TypeFam = text "type"
 
 ------------------------------
 instance Ppr FamilyResultSig where

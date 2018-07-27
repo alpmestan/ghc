@@ -31,8 +31,9 @@ import Data.Binary.Get
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Unsafe as B
 import GHC.Exts
+import GHC.Exts.Heap
 import GHC.Stack
-import Foreign
+import Foreign hiding (void)
 import Foreign.C
 import GHC.Conc.Sync
 import GHC.IO hiding ( bracket )
@@ -86,6 +87,10 @@ run m = case m of
   MkConInfoTable ptrs nptrs tag ptrtag desc ->
     toRemotePtr <$> mkConInfoTable ptrs nptrs tag ptrtag desc
   StartTH -> startTH
+  GetClosure ref -> do
+    clos <- getClosureData =<< localRef ref
+    mapM (\(Box x) -> mkRemoteRef (HValue x)) clos
+  Seq ref -> tryEval (void $ evaluate =<< localRef ref)
   _other -> error "GHCi.Run.run"
 
 evalStmt :: EvalOpts -> EvalExpr HValueRef -> IO (EvalStatus [HValueRef])
@@ -298,7 +303,12 @@ setStepFlag = poke stepFlag 1
 resetStepFlag :: IO ()
 resetStepFlag = poke stepFlag 0
 
-type BreakpointCallback = Int# -> Int# -> Bool -> HValue -> IO ()
+type BreakpointCallback
+     = Int#    -- the breakpoint index
+    -> Int#    -- the module uniq
+    -> Bool    -- exception?
+    -> HValue  -- the AP_STACK, or exception
+    -> IO ()
 
 foreign import ccall "&rts_breakpoint_io_action"
    breakPointIOAction :: Ptr (StablePtr BreakpointCallback)

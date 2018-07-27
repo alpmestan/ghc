@@ -83,6 +83,9 @@ Other Prelude modules are much easier with fewer complex dependencies.
            , UnboxedTuples
            , ExistentialQuantification
            , RankNTypes
+           , KindSignatures
+           , PolyKinds
+           , DataKinds
   #-}
 -- -Wno-orphans is needed for things like:
 -- Orphan rule: "x# -# x#" ALWAYS forall x# :: Int# -# x# x# = 0
@@ -114,7 +117,8 @@ module GHC.Base
         module GHC.Types,
         module GHC.Prim,        -- Re-export GHC.Prim and [boot] GHC.Err,
                                 -- to avoid lots of people having to
-        module GHC.Err          -- import it explicitly
+        module GHC.Err,         -- import it explicitly
+        module GHC.Maybe
   )
         where
 
@@ -124,10 +128,12 @@ import GHC.CString
 import GHC.Magic
 import GHC.Prim
 import GHC.Err
+import GHC.Maybe
 import {-# SOURCE #-} GHC.IO (failIO,mplusIO)
 
-import GHC.Tuple ()     -- Note [Depend on GHC.Tuple]
-import GHC.Integer ()   -- Note [Depend on GHC.Integer]
+import GHC.Tuple ()              -- Note [Depend on GHC.Tuple]
+import GHC.Integer ()            -- Note [Depend on GHC.Integer]
+import GHC.Natural ()            -- Note [Depend on GHC.Natural]
 
 -- for 'class Semigroup'
 import {-# SOURCE #-} GHC.Real (Integral)
@@ -179,6 +185,10 @@ Similarly, tuple syntax (or ()) creates an implicit dependency on
 GHC.Tuple, so we use the same rule as for Integer --- see Note [Depend on
 GHC.Integer] --- to explain this to the build system.  We make GHC.Base
 depend on GHC.Tuple, and everything else depends on GHC.Base or Prelude.
+
+Note [Depend on GHC.Natural]
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+Similar to GHC.Integer.
 -}
 
 #if 0
@@ -198,19 +208,6 @@ otherwise = True
 build = errorWithoutStackTrace "urk"
 foldr = errorWithoutStackTrace "urk"
 #endif
-
--- | The 'Maybe' type encapsulates an optional value.  A value of type
--- @'Maybe' a@ either contains a value of type @a@ (represented as @'Just' a@),
--- or it is empty (represented as 'Nothing').  Using 'Maybe' is a good way to
--- deal with errors or exceptional cases without resorting to drastic
--- measures such as 'error'.
---
--- The 'Maybe' type is also a monad.  It is a simple kind of error
--- monad, where all errors are represented by 'Nothing'.  A richer
--- error monad can be built using the 'Data.Either.Either' type.
---
-data  Maybe a  =  Nothing | Just a
-  deriving (Eq, Ord)
 
 infixr 6 <>
 
@@ -595,6 +592,33 @@ liftA3 f a b c = liftA2 f a b <*> c
 -- | The 'join' function is the conventional monad join operator. It
 -- is used to remove one level of monadic structure, projecting its
 -- bound argument into the outer level.
+--
+-- ==== __Examples__
+--
+-- A common use of 'join' is to run an 'IO' computation returned from
+-- an 'GHC.Conc.STM' transaction, since 'GHC.Conc.STM' transactions
+-- can't perform 'IO' directly. Recall that
+--
+-- @
+-- 'GHC.Conc.atomically' :: STM a -> IO a
+-- @
+--
+-- is used to run 'GHC.Conc.STM' transactions atomically. So, by
+-- specializing the types of 'GHC.Conc.atomically' and 'join' to
+--
+-- @
+-- 'GHC.Conc.atomically' :: STM (IO b) -> IO (IO b)
+-- 'join'       :: IO (IO b)  -> IO b
+-- @
+--
+-- we can compose them as
+--
+-- @
+-- 'join' . 'GHC.Conc.atomically' :: STM (IO b) -> IO b
+-- @
+--
+-- to run an 'GHC.Conc.STM' transaction and the 'IO' action it
+-- returns.
 join              :: (Monad m) => m (m a) -> m a
 join x            =  x >>= id
 
@@ -880,15 +904,24 @@ instance Alternative Maybe where
 
 -- | Monads that also support choice and failure.
 class (Alternative m, Monad m) => MonadPlus m where
-   -- | the identity of 'mplus'.  It should also satisfy the equations
+   -- | The identity of 'mplus'.  It should also satisfy the equations
    --
    -- > mzero >>= f  =  mzero
    -- > v >> mzero   =  mzero
    --
+   -- The default definition is
+   --
+   -- @
+   -- mzero = 'empty'
+   -- @
    mzero :: m a
    mzero = empty
 
-   -- | an associative operation
+   -- | An associative operation. The default definition is
+   --
+   -- @
+   -- mplus = ('<|>')
+   -- @
    mplus :: m a -> m a -> m a
    mplus = (<|>)
 
@@ -904,7 +937,9 @@ infixr 5 :|
 --
 -- @since 4.9.0.0
 data NonEmpty a = a :| [a]
-  deriving (Eq, Ord)
+  deriving ( Eq  -- ^ @since 4.9.0.0
+           , Ord -- ^ @since 4.9.0.0
+           )
 
 -- | @since 4.9.0.0
 instance Functor NonEmpty where
@@ -1278,16 +1313,20 @@ flip f x y              =  f y x
 --
 -- It is also useful in higher-order situations, such as @'map' ('$' 0) xs@,
 -- or @'Data.List.zipWith' ('$') fs xs@.
+--
+-- Note that @($)@ is levity-polymorphic in its result type, so that
+--     foo $ True    where  foo :: Bool -> Int#
+-- is well-typed
 {-# INLINE ($) #-}
-($)                     :: (a -> b) -> a -> b
-f $ x                   =  f x
+($) :: forall r a (b :: TYPE r). (a -> b) -> a -> b
+f $ x =  f x
 
 -- | Strict (call-by-value) application operator. It takes a function and an
 -- argument, evaluates the argument to weak head normal form (WHNF), then calls
 -- the function with that value.
 
-($!)                    :: (a -> b) -> a -> b
-f $! x                  = let !vx = x in f vx  -- see #2273
+($!) :: forall r a (b :: TYPE r). (a -> b) -> a -> b
+f $! x = let !vx = x in f vx  -- see #2273
 
 -- | @'until' p f@ yields the result of applying @f@ until @p@ holds.
 until                   :: (a -> Bool) -> (a -> a) -> a -> a

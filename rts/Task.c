@@ -199,6 +199,7 @@ freeTask (Task *task)
     stgFree(task);
 }
 
+/* Must take all_tasks_mutex */
 static Task*
 newTask (bool worker)
 {
@@ -415,7 +416,7 @@ workerTaskStop (Task *task)
 
 #if defined(THREADED_RTS)
 
-static void OSThreadProcAttr
+static void* OSThreadProcAttr
 workerStart(Task *task)
 {
     Capability *cap;
@@ -441,8 +442,11 @@ workerStart(Task *task)
     traceTaskCreate(task, cap);
 
     scheduleWorker(cap,task);
+
+    return NULL;
 }
 
+/* N.B. must take all_tasks_mutex */
 void
 startWorkerTask (Capability *cap)
 {

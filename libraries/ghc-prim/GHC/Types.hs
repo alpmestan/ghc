@@ -32,7 +32,7 @@ module GHC.Types (
         Nat, Symbol,
         Any,
         type (~~), Coercible,
-        TYPE, RuntimeRep(..), Type, type (*), type (★), Constraint,
+        TYPE, RuntimeRep(..), Type, Constraint,
           -- The historical type * should ideally be written as
           -- `type *`, without the parentheses. But that's a true
           -- pain to parse, and for little gain.
@@ -58,12 +58,6 @@ data Constraint
 
 -- | The kind of types with values. For example @Int :: Type@.
 type Type = TYPE 'LiftedRep
-
--- | A backward-compatible (pre-GHC 8.0) synonym for 'Type'
-type * = TYPE 'LiftedRep
-
--- | A unicode backward-compatible (pre-GHC 8.0) synonym for 'Type'
-type ★ = TYPE 'LiftedRep
 
 {- *********************************************************************
 *                                                                      *
@@ -217,6 +211,12 @@ inside GHC, to change the kind and type.
 class a ~~ b
   -- See also Note [The equality types story] in TysPrim
 
+-- | Lifted, homogeneous equality. By lifted, we mean that it
+-- can be bogus (deferred type error). By homogeneous, the two
+-- types @a@ and @b@ must have the sme kinds.
+class a ~ b
+  -- See also Note [The equality types story] in TysPrim
+
 -- | @Coercible@ is a two-parameter class that has instances for types @a@ and @b@ if
 --      the compiler can infer that they have the same representation. This class
 --      does not have regular instances; instead they are created on-the-fly during
@@ -260,7 +260,7 @@ class a ~~ b
 --      @type role Set nominal@
 --
 --      For more details about this feature, please refer to
---      <http://www.cis.upenn.edu/~eir/papers/2014/coercible/coercible.pdf Safe Coercions>
+--      <http://research.microsoft.com/en-us/um/people/simonpj/papers/ext-f/coercible.pdf Safe Coercions>
 --      by Joachim Breitner, Richard A. Eisenberg, Simon Peyton Jones and Stephanie Weirich.
 --
 --      @since 4.7.0.0

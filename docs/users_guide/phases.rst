@@ -527,6 +527,11 @@ Options affecting code generation
     via LLVM requires LLVM's :command:`opt` and :command:`llc` executables to be
     in :envvar:`PATH`.
 
+    .. note::
+
+        Note that this GHC release expects an LLVM version in the |llvm-version|
+        release series.
+
 .. ghc-flag:: -fno-code
     :shortdesc: Omit code generation
     :type: dynamic
@@ -575,6 +580,15 @@ Options affecting code generation
     Windows, position-independent code is never used so the flag is a
     no-op on that platform.
 
+.. ghc-flag:: -fexternal-dynamic-refs
+    :shortdesc: Generate code for linking against dynamic libraries
+    :type: dynamic
+    :category: codegen
+
+    When generating code, assume that entities imported from a
+    different module might be dynamically linked.  This flag is enabled
+    automatically by :ghc-flag:`-dynamic`.
+
 .. ghc-flag:: -fPIE
     :shortdesc: Generate code for a position-independent executable (where available)
     :type: dynamic
@@ -591,12 +605,11 @@ Options affecting code generation
     :category: codegen
     :noindex:
 
-    When generating code, assume that entities imported from a different
-    package will be dynamically linked. This can reduce code size
-    tremendously, but may slow-down cross-package calls of non-inlined
-    functions. There can be some complications combining :ghc-flag:`-shared`
-    with this flag relating to linking in the RTS under Linux. See
-    :ghc-ticket:`10352`.
+    Build code for dynamic linking.  This can reduce code size
+    tremendously, but may slow-down cross-module calls of non-inlined
+    functions. There can be some complications combining
+    :ghc-flag:`-shared` with this flag relating to linking in the RTS
+    under Linux. See :ghc-ticket:`10352`.
 
     Note that using this option when linking causes GHC to link against
     shared libraries.
@@ -665,7 +678,7 @@ for example).
 
 .. ghc-flag:: -package ⟨name⟩
     :shortdesc: Expose package ⟨pkg⟩
-    :type: dynamic/ ``:set``
+    :type: dynamic
     :category: linking
 
     If you are using a Haskell "package" (see :ref:`packages`), don't
@@ -861,11 +874,12 @@ for example).
     ``Main`` module present (normally the compiler will not attempt
     linking when there is no ``Main``).
 
-    The flags :ghc-flag:`-rtsopts[=⟨none|some|all⟩]` and
+    The flags :ghc-flag:`-rtsopts[=⟨none|some|all|ignore|ignoreAll⟩]` and
     :ghc-flag:`-with-rtsopts=⟨opts⟩` have no effect when used with
     :ghc-flag:`-no-hs-main`, because they are implemented by changing the
     definition of ``main`` that GHC generates. See :ref:`using-own-main` for
-    how to get the effect of :ghc-flag:`-rtsopts[=⟨none|some|all⟩]` and
+    how to get the effect of
+    :ghc-flag:`-rtsopts[=⟨none|some|all|ignore|ignoreAll⟩]` and
     :ghc-flag:`-with-rtsopts=⟨opts⟩` when using your own ``main``.
 
 .. ghc-flag:: -debug
@@ -895,9 +909,8 @@ for example).
     The threaded runtime system provides the following benefits:
 
     -  It enables the :rts-flag:`-N ⟨x⟩` RTS option to be used,
-       which allows threads to run in parallelparallelism on a
-       multiprocessormultiprocessorSMP or multicoremulticore machine.
-       See :ref:`using-smp`.
+       which allows threads to run in parallel on a multiprocessor
+       or multicore machine. See :ref:`using-smp`.
 
     -  If a thread makes a foreign call (and the call is not marked
        ``unsafe``), then other Haskell threads in the program will
@@ -920,12 +933,17 @@ for example).
     :ghc-flag:`-eventlog` can be used with :ghc-flag:`-threaded`. It is implied by
     :ghc-flag:`-debug`.
 
-.. ghc-flag:: -rtsopts[=⟨none|some|all⟩]
+.. ghc-flag:: -rtsopts[=⟨none|some|all|ignore|ignoreAll⟩]
     :shortdesc: Control whether the RTS behaviour can be tweaked via command-line
         flags and the ``GHCRTS`` environment variable. Using ``none``
         means no RTS flags can be given; ``some`` means only a minimum
-        of safe options can be given (the default), and ``all`` (or no
-        argument at all) means that all RTS flags are permitted.
+        of safe options can be given (the default); ``all`` (or no
+        argument at all) means that all RTS flags are permitted; ``ignore``
+        means RTS flags can be given, but are treated as regular arguments and
+        passed to the Haskell program as arguments; ``ignoreAll`` is the same as
+        ``ignore``, but ``GHCRTS`` is also ignored. ``-rtsopts`` does not
+        affect ``-with-rtsopts`` behavior; flags passed via ``-with-rtsopts``
+        are used regardless of ``-rtsopts``.
     :type: dynamic
     :category: linking
 
@@ -941,7 +959,7 @@ for example).
         an error message. If the ``GHCRTS`` environment variable is set,
         then the program will emit a warning message, ``GHCRTS`` will be
         ignored, and the program will run as normal.
-    
+
     ``-rtsopts=ignore``
         Disables all processing of RTS options. Unlike ``none`` this treats
         all RTS flags appearing on the command line the same way as regular
@@ -970,6 +988,9 @@ for example).
     Note that ``-rtsopts`` has no effect when used with :ghc-flag:`-no-hs-main`;
     see :ref:`using-own-main` for details.
 
+    ``-rtsopts`` does not affect RTS options passed via ``-with-rtsopts``;
+    those are used regardless of ``-rtsopts``.
+
 .. ghc-flag:: -with-rtsopts=⟨opts⟩
     :shortdesc: Set the default RTS options to ⟨opts⟩.
     :type: dynamic
@@ -988,16 +1009,17 @@ for example).
 
 .. ghc-flag:: -no-rtsopts-suggestions
     :shortdesc: Don't print RTS suggestions about linking with
-        :ghc-flag:`-rtsopts[=⟨none|some|all⟩]`.
+        :ghc-flag:`-rtsopts[=⟨none|some|all|ignore|ignoreAll⟩]`.
     :type: dynamic
     :category: linking
 
     This option disables RTS suggestions about linking with
-    :ghc-flag:`-rtsopts[=⟨none|some|all⟩]` when they are not available. These
-    suggestions would be unhelpful if the users have installed Haskell programs
-    through their package managers. With this option enabled, these suggestions
-    will not appear. It is recommended for people distributing binaries to
-    build with either ``-rtsopts`` or ``-no-rtsopts-suggestions``.
+    :ghc-flag:`-rtsopts[=⟨none|some|all|ignore|ignoreAll⟩]` when they are not
+    available. These suggestions would be unhelpful if the users have installed
+    Haskell programs through their package managers. With this option enabled,
+    these suggestions will not appear. It is recommended for people
+    distributing binaries to build with either ``-rtsopts`` or
+    ``-no-rtsopts-suggestions``.
 
 .. ghc-flag:: -fno-gen-manifest
     :shortdesc: Do not generate a manifest file (Windows only)

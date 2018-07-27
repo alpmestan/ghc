@@ -184,7 +184,7 @@ data IfaceTyConParent
   = IfNoParent
   | IfDataInstance IfExtName
                    IfaceTyCon
-                   IfaceTcArgs
+                   IfaceAppArgs
 
 data IfaceFamTyConFlav
   = IfaceDataFamilyTyCon                      -- Data family
@@ -211,7 +211,7 @@ data IfaceAT = IfaceAT  -- See Class.ClassATItem
 -- This is just like CoAxBranch
 data IfaceAxBranch = IfaceAxBranch { ifaxbTyVars   :: [IfaceTvBndr]
                                    , ifaxbCoVars   :: [IfaceIdBndr]
-                                   , ifaxbLHS      :: IfaceTcArgs
+                                   , ifaxbLHS      :: IfaceAppArgs
                                    , ifaxbRoles    :: [Role]
                                    , ifaxbRHS      :: IfaceType
                                    , ifaxbIncomps  :: [BranchIndex] }
@@ -573,7 +573,7 @@ pprAxBranch pp_tc (IfaceAxBranch { ifaxbTyVars = tvs
       | otherwise
       = brackets (pprWithCommas (pprIfaceTvBndr True) tvs <> semi <+>
                   pprWithCommas pprIfaceIdBndr cvs)
-    pp_lhs = hang pp_tc 2 (pprParendIfaceTcArgs pat_tys)
+    pp_lhs = hang pp_tc 2 (pprParendIfaceAppArgs pat_tys)
     maybe_incomps = ppUnless (null incomps) $ parens $
                     text "incompatible indices:" <+> ppr incomps
 
@@ -862,11 +862,13 @@ pprIfaceDecl _ (IfacePatSyn { ifName = name,
   = sdocWithDynFlags mk_msg
   where
     mk_msg dflags
-      = hsep [ text "pattern", pprPrefixOcc name, dcolon
-             , univ_msg, pprIfaceContextArr req_ctxt
-             , ppWhen insert_empty_ctxt $ parens empty <+> darrow
-             , ex_msg, pprIfaceContextArr prov_ctxt
-             , pprIfaceType $ foldr IfaceFunTy pat_ty arg_tys]
+      = hang (text "pattern" <+> pprPrefixOcc name)
+           2 (dcolon <+> sep [univ_msg
+                             , pprIfaceContextArr req_ctxt
+                             , ppWhen insert_empty_ctxt $ parens empty <+> darrow
+                             , ex_msg
+                             , pprIfaceContextArr prov_ctxt
+                             , pprIfaceType $ foldr IfaceFunTy pat_ty arg_tys ])
       where
         univ_msg = pprUserIfaceForAll univ_bndrs
         ex_msg   = pprUserIfaceForAll ex_bndrs
@@ -951,7 +953,7 @@ pprIfaceTyConParent IfNoParent
 pprIfaceTyConParent (IfDataInstance _ tc tys)
   = sdocWithDynFlags $ \dflags ->
     let ftys = stripInvisArgs dflags tys
-    in pprIfaceTypeApp TopPrec tc ftys
+    in pprIfaceTypeApp topPrec tc ftys
 
 pprIfaceDeclHead :: IfaceContext -> ShowSub -> Name
                  -> [IfaceTyConBinder]   -- of the tycon, for invisible-suppression
@@ -1048,7 +1050,7 @@ pprIfaceConDecl ss gadt_style tycon tc_binders parent
     -- See Note [Result type of a data family GADT]
     mk_user_con_res_ty eq_spec
       | IfDataInstance _ tc tys <- parent
-      = pprIfaceType (IfaceTyConApp tc (substIfaceTcArgs gadt_subst tys))
+      = pprIfaceType (IfaceTyConApp tc (substIfaceAppArgs gadt_subst tys))
       | otherwise
       = sdocWithDynFlags (ppr_tc_app gadt_subst)
       where
@@ -1345,7 +1347,7 @@ freeNamesIfAxBranch (IfaceAxBranch { ifaxbTyVars   = tyvars
                                    , ifaxbRHS      = rhs })
   = fnList freeNamesIfTvBndr tyvars &&&
     fnList freeNamesIfIdBndr covars &&&
-    freeNamesIfTcArgs lhs &&&
+    freeNamesIfAppArgs lhs &&&
     freeNamesIfType rhs
 
 freeNamesIfIdDetails :: IfaceIdDetails -> NameSet
@@ -1405,17 +1407,17 @@ freeNamesIfBang _               = emptyNameSet
 freeNamesIfKind :: IfaceType -> NameSet
 freeNamesIfKind = freeNamesIfType
 
-freeNamesIfTcArgs :: IfaceTcArgs -> NameSet
-freeNamesIfTcArgs (ITC_Vis   t ts) = freeNamesIfType t &&& freeNamesIfTcArgs ts
-freeNamesIfTcArgs (ITC_Invis k ks) = freeNamesIfKind k &&& freeNamesIfTcArgs ks
-freeNamesIfTcArgs ITC_Nil          = emptyNameSet
+freeNamesIfAppArgs :: IfaceAppArgs -> NameSet
+freeNamesIfAppArgs (IA_Vis   t ts) = freeNamesIfType t &&& freeNamesIfAppArgs ts
+freeNamesIfAppArgs (IA_Invis k ks) = freeNamesIfKind k &&& freeNamesIfAppArgs ks
+freeNamesIfAppArgs IA_Nil          = emptyNameSet
 
 freeNamesIfType :: IfaceType -> NameSet
 freeNamesIfType (IfaceFreeTyVar _)    = emptyNameSet
 freeNamesIfType (IfaceTyVar _)        = emptyNameSet
-freeNamesIfType (IfaceAppTy s t)      = freeNamesIfType s &&& freeNamesIfType t
-freeNamesIfType (IfaceTyConApp tc ts) = freeNamesIfTc tc &&& freeNamesIfTcArgs ts
-freeNamesIfType (IfaceTupleTy _ _ ts) = freeNamesIfTcArgs ts
+freeNamesIfType (IfaceAppTy s t)      = freeNamesIfType s &&& freeNamesIfAppArgs t
+freeNamesIfType (IfaceTyConApp tc ts) = freeNamesIfTc tc &&& freeNamesIfAppArgs ts
+freeNamesIfType (IfaceTupleTy _ _ ts) = freeNamesIfAppArgs ts
 freeNamesIfType (IfaceLitTy _)        = emptyNameSet
 freeNamesIfType (IfaceForAllTy tv t)  = freeNamesIfTyVarBndr tv &&& freeNamesIfType t
 freeNamesIfType (IfaceFunTy s t)      = freeNamesIfType s &&& freeNamesIfType t
@@ -1423,8 +1425,14 @@ freeNamesIfType (IfaceDFunTy s t)     = freeNamesIfType s &&& freeNamesIfType t
 freeNamesIfType (IfaceCastTy t c)     = freeNamesIfType t &&& freeNamesIfCoercion c
 freeNamesIfType (IfaceCoercionTy c)   = freeNamesIfCoercion c
 
+freeNamesIfMCoercion :: IfaceMCoercion -> NameSet
+freeNamesIfMCoercion IfaceMRefl    = emptyNameSet
+freeNamesIfMCoercion (IfaceMCo co) = freeNamesIfCoercion co
+
 freeNamesIfCoercion :: IfaceCoercion -> NameSet
-freeNamesIfCoercion (IfaceReflCo _ t) = freeNamesIfType t
+freeNamesIfCoercion (IfaceReflCo t) = freeNamesIfType t
+freeNamesIfCoercion (IfaceGReflCo _ t mco)
+  = freeNamesIfType t &&& freeNamesIfMCoercion mco
 freeNamesIfCoercion (IfaceFunCo _ c1 c2)
   = freeNamesIfCoercion c1 &&& freeNamesIfCoercion c2
 freeNamesIfCoercion (IfaceTyConAppCo _ tc cos)
@@ -1434,8 +1442,8 @@ freeNamesIfCoercion (IfaceAppCo c1 c2)
 freeNamesIfCoercion (IfaceForAllCo _ kind_co co)
   = freeNamesIfCoercion kind_co &&& freeNamesIfCoercion co
 freeNamesIfCoercion (IfaceFreeCoVar _) = emptyNameSet
-freeNamesIfCoercion (IfaceCoVarCo _)
-  = emptyNameSet
+freeNamesIfCoercion (IfaceCoVarCo _)   = emptyNameSet
+freeNamesIfCoercion (IfaceHoleCo _)    = emptyNameSet
 freeNamesIfCoercion (IfaceAxiomInstCo ax _ cos)
   = unitNameSet ax &&& fnList freeNamesIfCoercion cos
 freeNamesIfCoercion (IfaceUnivCo p _ t1 t2)
@@ -1450,8 +1458,6 @@ freeNamesIfCoercion (IfaceLRCo _ co)
   = freeNamesIfCoercion co
 freeNamesIfCoercion (IfaceInstCo co co2)
   = freeNamesIfCoercion co &&& freeNamesIfCoercion co2
-freeNamesIfCoercion (IfaceCoherenceCo c1 c2)
-  = freeNamesIfCoercion c1 &&& freeNamesIfCoercion c2
 freeNamesIfCoercion (IfaceKindCo c)
   = freeNamesIfCoercion c
 freeNamesIfCoercion (IfaceSubCo co)
@@ -1465,7 +1471,6 @@ freeNamesIfProv IfaceUnsafeCoerceProv    = emptyNameSet
 freeNamesIfProv (IfacePhantomProv co)    = freeNamesIfCoercion co
 freeNamesIfProv (IfaceProofIrrelProv co) = freeNamesIfCoercion co
 freeNamesIfProv (IfacePluginProv _)      = emptyNameSet
-freeNamesIfProv (IfaceHoleProv _)        = emptyNameSet
 
 freeNamesIfTyVarBndr :: TyVarBndr IfaceTvBndr vis -> NameSet
 freeNamesIfTyVarBndr (TvBndr tv _) = freeNamesIfTvBndr tv
@@ -1562,7 +1567,7 @@ freeNamesIfFamInst (IfaceFamInst { ifFamInstFam = famName
 freeNamesIfaceTyConParent :: IfaceTyConParent -> NameSet
 freeNamesIfaceTyConParent IfNoParent = emptyNameSet
 freeNamesIfaceTyConParent (IfDataInstance ax tc tys)
-  = unitNameSet ax &&& freeNamesIfTc tc &&& freeNamesIfTcArgs tys
+  = unitNameSet ax &&& freeNamesIfTc tc &&& freeNamesIfAppArgs tys
 
 -- helpers
 (&&&) :: NameSet -> NameSet -> NameSet

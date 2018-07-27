@@ -74,8 +74,6 @@ module GHC.Conc.Sync
         , orElse
         , throwSTM
         , catchSTM
-        , alwaysSucceeds
-        , always
         , TVar(..)
         , newTVar
         , newTVarIO
@@ -105,6 +103,7 @@ import Data.Maybe
 import GHC.Base
 import {-# SOURCE #-} GHC.IO.Handle ( hFlush )
 import {-# SOURCE #-} GHC.IO.Handle.FD ( stdout )
+import GHC.Int
 import GHC.IO
 import GHC.IO.Encoding.UTF8
 import GHC.IO.Exception
@@ -194,18 +193,16 @@ instance Ord ThreadId where
 --
 -- @since 4.8.0.0
 setAllocationCounter :: Int64 -> IO ()
-setAllocationCounter i = do
-  ThreadId t <- myThreadId
-  rts_setThreadAllocationCounter t i
+setAllocationCounter (I64# i) = IO $ \s ->
+  case setThreadAllocationCounter# i s of s' -> (# s', () #)
 
 -- | Return the current value of the allocation counter for the
 -- current thread.
 --
 -- @since 4.8.0.0
 getAllocationCounter :: IO Int64
-getAllocationCounter = do
-  ThreadId t <- myThreadId
-  rts_getThreadAllocationCounter t
+getAllocationCounter = IO $ \s ->
+  case getThreadAllocationCounter# s of (# s', ctr #) -> (# s', I64# ctr #)
 
 -- | Enables the allocation counter to be treated as a limit for the
 -- current thread.  When the allocation limit is enabled, if the
@@ -241,16 +238,6 @@ disableAllocationLimit :: IO ()
 disableAllocationLimit = do
   ThreadId t <- myThreadId
   rts_disableThreadAllocationLimit t
-
--- We cannot do these operations safely on another thread, because on
--- a 32-bit machine we cannot do atomic operations on a 64-bit value.
--- Therefore, we only expose APIs that allow getting and setting the
--- limit of the current thread.
-foreign import ccall unsafe "rts_setThreadAllocationCounter"
-  rts_setThreadAllocationCounter :: ThreadId# -> Int64 -> IO ()
-
-foreign import ccall unsafe "rts_getThreadAllocationCounter"
-  rts_getThreadAllocationCounter :: ThreadId# -> IO Int64
 
 foreign import ccall unsafe "rts_enableThreadAllocationLimit"
   rts_enableThreadAllocationLimit :: ThreadId# -> IO ()
@@ -558,7 +545,10 @@ data BlockReason
         -- ^blocked on some other resource.  Without @-threaded@,
         -- I\/O and 'threadDelay' show up as 'BlockedOnOther', with @-threaded@
         -- they show up as 'BlockedOnMVar'.
-  deriving (Eq,Ord,Show)
+  deriving ( Eq   -- ^ @since 4.3.0.0
+           , Ord  -- ^ @since 4.3.0.0
+           , Show -- ^ @since 4.3.0.0
+           )
 
 -- | The current status of a thread
 data ThreadStatus
@@ -570,7 +560,10 @@ data ThreadStatus
         -- ^the thread is blocked on some resource
   | ThreadDied
         -- ^the thread received an uncaught exception
-  deriving (Eq,Ord,Show)
+  deriving ( Eq   -- ^ @since 4.3.0.0
+           , Ord  -- ^ @since 4.3.0.0
+           , Show -- ^ @since 4.3.0.0
+           )
 
 threadStatus :: ThreadId -> IO ThreadStatus
 threadStatus (ThreadId t) = IO $ \s ->
@@ -781,31 +774,6 @@ catchSTM (STM m) handler = STM $ catchSTM# m handler'
       handler' e = case fromException e of
                      Just e' -> unSTM (handler e')
                      Nothing -> raiseIO# e
-
--- | Low-level primitive on which 'always' and 'alwaysSucceeds' are built.
--- 'checkInv' differs from these in that,
---
--- 1. the invariant is not checked when 'checkInv' is called, only at the end of
--- this and subsequent transactions
--- 2. the invariant failure is indicated by raising an exception.
-checkInv :: STM a -> STM ()
-checkInv (STM m) = STM (\s -> case (check# m) s of s' -> (# s', () #))
-
--- | 'alwaysSucceeds' adds a new invariant that must be true when passed
--- to 'alwaysSucceeds', at the end of the current transaction, and at
--- the end of every subsequent transaction.  If it fails at any
--- of those points then the transaction violating it is aborted
--- and the exception raised by the invariant is propagated.
-alwaysSucceeds :: STM a -> STM ()
-alwaysSucceeds i = do ( i >> retry ) `orElse` ( return () )
-                      checkInv i
-
--- | 'always' is a variant of 'alwaysSucceeds' in which the invariant is
--- expressed as an @STM Bool@ action that must return @True@.  Returning
--- @False@ or raising an exception are both treated as invariant failures.
-always :: STM Bool -> STM ()
-always i = alwaysSucceeds ( do v <- i
-                               if (v) then return () else ( errorWithoutStackTrace "Transactional invariant violation" ) )
 
 -- |Shared memory locations that support atomic memory transactions.
 data TVar a = TVar (TVar# RealWorld a)

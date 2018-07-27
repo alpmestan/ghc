@@ -299,11 +299,27 @@ instance Foldable [] where
 -- | @since 4.9.0.0
 instance Foldable NonEmpty where
   foldr f z ~(a :| as) = f a (List.foldr f z as)
-  foldl f z ~(a :| as) = List.foldl f (f z a) as
-  foldl1 f ~(a :| as) = List.foldl f a as
+  foldl f z (a :| as) = List.foldl f (f z a) as
+  foldl1 f (a :| as) = List.foldl f a as
+
+  -- GHC isn't clever enough to transform the default definition
+  -- into anything like this, so we'd end up shuffling a bunch of
+  -- Maybes around.
+  foldr1 f (p :| ps) = foldr go id ps p
+    where
+      go x r prev = f prev (r x)
+
+  -- We used to say
+  --
+  --   length (_ :| as) = 1 + length as
+  --
+  -- but the default definition is better, counting from 1.
+  --
+  -- The default definition also works great for null and foldl'.
+  -- As usual for cons lists, foldr' is basically hopeless.
+
   foldMap f ~(a :| as) = f a `mappend` foldMap f as
   fold ~(m :| ms) = m `mappend` fold ms
-  length (_ :| as) = 1 + List.length as
   toList ~(a :| as) = a : as
 
 -- | @since 4.7.0.0
@@ -420,6 +436,14 @@ instance Foldable First where
 instance Foldable Last where
     foldMap f = foldMap f . getLast
 
+-- | @since 4.12.0.0
+instance (Foldable f) => Foldable (Alt f) where
+    foldMap f = foldMap f . getAlt
+
+-- | @since 4.12.0.0
+instance (Foldable f) => Foldable (Ap f) where
+    foldMap f = foldMap f . getAp
+
 -- Instances for GHC.Generics
 -- | @since 4.9.0.0
 instance Foldable U1 where
@@ -439,20 +463,51 @@ instance Foldable U1 where
     sum _      = 0
     product _  = 1
 
+-- | @since 4.9.0.0
 deriving instance Foldable V1
+
+-- | @since 4.9.0.0
 deriving instance Foldable Par1
+
+-- | @since 4.9.0.0
 deriving instance Foldable f => Foldable (Rec1 f)
+
+-- | @since 4.9.0.0
 deriving instance Foldable (K1 i c)
+
+-- | @since 4.9.0.0
 deriving instance Foldable f => Foldable (M1 i c f)
+
+-- | @since 4.9.0.0
 deriving instance (Foldable f, Foldable g) => Foldable (f :+: g)
+
+-- | @since 4.9.0.0
 deriving instance (Foldable f, Foldable g) => Foldable (f :*: g)
+
+-- | @since 4.9.0.0
 deriving instance (Foldable f, Foldable g) => Foldable (f :.: g)
+
+-- | @since 4.9.0.0
 deriving instance Foldable UAddr
+
+-- | @since 4.9.0.0
 deriving instance Foldable UChar
+
+-- | @since 4.9.0.0
 deriving instance Foldable UDouble
+
+-- | @since 4.9.0.0
 deriving instance Foldable UFloat
+
+-- | @since 4.9.0.0
 deriving instance Foldable UInt
+
+-- | @since 4.9.0.0
 deriving instance Foldable UWord
+
+-- Instances for Data.Ord
+-- | @since 4.12.0.0
+deriving instance Foldable Down
 
 -- | Monadic fold over the elements of a structure,
 -- associating to the right, i.e. from right to left.
@@ -519,7 +574,7 @@ sequence_ = foldr (>>) (return ())
 
 -- | The sum of a collection of actions, generalizing 'concat'.
 --
--- asum [Just "Hello", Nothing, Just "World"]
+-- >>> asum [Just "Hello", Nothing, Just "World"]
 -- Just "Hello"
 asum :: (Foldable t, Alternative f) => t (f a) -> f a
 {-# INLINE asum #-}

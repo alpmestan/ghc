@@ -13,6 +13,7 @@
 #include "rts/Bytecodes.h"  /* for InstrPtr */
 
 #include "sm/Storage.h"
+#include "sm/GCThread.h"
 #include "Hash.h"
 #include "Printer.h"
 #include "RtsUtils.h"
@@ -308,8 +309,8 @@ printClosure( const StgClosure *obj )
         debugBelch("MUT_ARR_PTRS_DIRTY(size=%" FMT_Word ")\n", (W_)((StgMutArrPtrs *)obj)->ptrs);
         break;
 
-    case MUT_ARR_PTRS_FROZEN:
-        debugBelch("MUT_ARR_PTRS_FROZEN(size=%" FMT_Word ")\n", (W_)((StgMutArrPtrs *)obj)->ptrs);
+    case MUT_ARR_PTRS_FROZEN_CLEAN:
+        debugBelch("MUT_ARR_PTRS_FROZEN_CLEAN(size=%" FMT_Word ")\n", (W_)((StgMutArrPtrs *)obj)->ptrs);
         break;
 
     case SMALL_MUT_ARR_PTRS_CLEAN:
@@ -322,8 +323,8 @@ printClosure( const StgClosure *obj )
                    (W_)((StgSmallMutArrPtrs *)obj)->ptrs);
         break;
 
-    case SMALL_MUT_ARR_PTRS_FROZEN:
-        debugBelch("SMALL_MUT_ARR_PTRS_FROZEN(size=%" FMT_Word ")\n",
+    case SMALL_MUT_ARR_PTRS_FROZEN_CLEAN:
+        debugBelch("SMALL_MUT_ARR_PTRS_FROZEN_CLEAN(size=%" FMT_Word ")\n",
                    (W_)((StgSmallMutArrPtrs *)obj)->ptrs);
         break;
 
@@ -331,7 +332,29 @@ printClosure( const StgClosure *obj )
     case MVAR_DIRTY:
         {
           StgMVar* mv = (StgMVar*)obj;
-          debugBelch("MVAR(head=%p, tail=%p, value=%p)\n", mv->head, mv->tail, mv->value);
+
+          debugBelch("MVAR(head=");
+          if ((StgClosure*)mv->head == &stg_END_TSO_QUEUE_closure) {
+              debugBelch("END_TSO_QUEUE");
+          } else {
+              debugBelch("%p", mv->head);
+          }
+
+          debugBelch(", tail=");
+          if ((StgClosure*)mv->tail == &stg_END_TSO_QUEUE_closure) {
+              debugBelch("END_TSO_QUEUE");
+          } else {
+              debugBelch("%p", mv->tail);
+          }
+
+          debugBelch(", value=");
+          if ((StgClosure*)mv->value == &stg_END_TSO_QUEUE_closure) {
+              debugBelch("END_TSO_QUEUE");
+          } else {
+              debugBelch("%p", mv->value);
+          }
+          debugBelch(")\n");
+
           break;
         }
 
@@ -358,7 +381,7 @@ printClosure( const StgClosure *obj )
 
     case WEAK:
             debugBelch("WEAK(");
-            debugBelch(" key=%p value=%p finalizer=%p",
+            debugBelch("key=%p value=%p finalizer=%p",
                     (StgPtr)(((StgWeak*)obj)->key),
                     (StgPtr)(((StgWeak*)obj)->value),
                     (StgPtr)(((StgWeak*)obj)->finalizer));
@@ -373,7 +396,7 @@ printClosure( const StgClosure *obj )
       break;
 
     case STACK:
-      debugBelch("STACK");
+      debugBelch("STACK\n");
       break;
 
 #if 0
@@ -387,9 +410,12 @@ printClosure( const StgClosure *obj )
 
     case COMPACT_NFDATA:
         debugBelch("COMPACT_NFDATA(size=%" FMT_Word ")\n",
-                   (W_)((StgCompactNFData *)obj)->totalW * sizeof(W_));
+                   (W_)((StgCompactNFData *)obj)->totalW * (W_)sizeof(W_));
         break;
 
+    case TREC_CHUNK:
+        debugBelch("TREC_CHUNK\n");
+        break;
 
     default:
             //barf("printClosure %d",get_itbl(obj)->type);
@@ -398,6 +424,21 @@ printClosure( const StgClosure *obj )
             barf("printClosure %d",get_itbl(obj)->type);
             return;
     }
+}
+
+void
+printMutableList(bdescr *bd)
+{
+    StgPtr p;
+
+    debugBelch("mutable list %p: ", bd);
+
+    for (; bd != NULL; bd = bd->link) {
+        for (p = bd->start; p < bd->free; p++) {
+            debugBelch("%p (%s), ", (void *)*p, info_type((StgClosure *)*p));
+        }
+    }
+    debugBelch("\n");
 }
 
 // If you know you have an UPDATE_FRAME, but want to know exactly which.
@@ -418,13 +459,6 @@ const char *info_update_frame(const StgClosure *closure)
         return "ERROR: Not an update frame!!!";
     }
 }
-
-/*
-void printGraph( StgClosure *obj )
-{
- printClosure(obj);
-}
-*/
 
 static void
 printSmallBitmap( StgPtr spBottom, StgPtr payload, StgWord bitmap,
@@ -520,6 +554,18 @@ printStackChunk( StgPtr sp, StgPtr spBottom )
                 debugBelch("stg_ap_ppppp_info\n" );
             } else if (c == (StgWord)&stg_ap_pppppp_info) {
                 debugBelch("stg_ap_pppppp_info\n" );
+            } else if (c == (StgWord)&stg_ret_v_info) {
+                debugBelch("stg_ret_v_info\n" );
+            } else if (c == (StgWord)&stg_ret_p_info) {
+                debugBelch("stg_ret_p_info\n" );
+            } else if (c == (StgWord)&stg_ret_n_info) {
+                debugBelch("stg_ret_n_info\n" );
+            } else if (c == (StgWord)&stg_ret_f_info) {
+                debugBelch("stg_ret_f_info\n" );
+            } else if (c == (StgWord)&stg_ret_d_info) {
+                debugBelch("stg_ret_d_info\n" );
+            } else if (c == (StgWord)&stg_ret_l_info) {
+                debugBelch("stg_ret_l_info\n" );
 #if defined(PROFILING)
             } else if (c == (StgWord)&stg_restore_cccs_info) {
                 debugBelch("stg_restore_cccs_info\n" );
@@ -590,10 +636,14 @@ printStackChunk( StgPtr sp, StgPtr spBottom )
     }
 }
 
+static void printStack( StgStack *stack )
+{
+    printStackChunk( stack->sp, stack->stack + stack->stack_size );
+}
+
 void printTSO( StgTSO *tso )
 {
-    printStackChunk( tso->stackobj->sp,
-                     tso->stackobj->stack+tso->stackobj->stack_size);
+    printStack( tso->stackobj );
 }
 
 /* --------------------------------------------------------------------------
@@ -776,17 +826,29 @@ findPtr(P_ p, int follow)
   int i = 0;
   searched = 0;
 
+#if 0
+  // We can't search the nursery, because we don't know which blocks contain
+  // valid data, because the bd->free pointers in the nursery are only reset
+  // just before a block is used.
   for (n = 0; n < n_capabilities; n++) {
       bd = nurseries[i].blocks;
       i = findPtrBlocks(p,bd,arr,arr_size,i);
       if (i >= arr_size) return;
   }
+#endif
 
   for (g = 0; g < RtsFlags.GcFlags.generations; g++) {
       bd = generations[g].blocks;
       i = findPtrBlocks(p,bd,arr,arr_size,i);
       bd = generations[g].large_objects;
       i = findPtrBlocks(p,bd,arr,arr_size,i);
+      if (i >= arr_size) return;
+      for (n = 0; n < n_capabilities; n++) {
+          i = findPtrBlocks(p, gc_threads[n]->gens[g].part_list,
+                            arr, arr_size, i);
+          i = findPtrBlocks(p, gc_threads[n]->gens[g].todo_bd,
+                            arr, arr_size, i);
+      }
       if (i >= arr_size) return;
   }
   if (follow && i == 1) {
@@ -870,8 +932,8 @@ const char *closure_type_names[] = {
  [ARR_WORDS]             = "ARR_WORDS",
  [MUT_ARR_PTRS_CLEAN]    = "MUT_ARR_PTRS_CLEAN",
  [MUT_ARR_PTRS_DIRTY]    = "MUT_ARR_PTRS_DIRTY",
- [MUT_ARR_PTRS_FROZEN0]  = "MUT_ARR_PTRS_FROZEN0",
- [MUT_ARR_PTRS_FROZEN]   = "MUT_ARR_PTRS_FROZEN",
+ [MUT_ARR_PTRS_FROZEN_DIRTY]  = "MUT_ARR_PTRS_FROZEN_DIRTY",
+ [MUT_ARR_PTRS_FROZEN_CLEAN]   = "MUT_ARR_PTRS_FROZEN_CLEAN",
  [MUT_VAR_CLEAN]         = "MUT_VAR_CLEAN",
  [MUT_VAR_DIRTY]         = "MUT_VAR_DIRTY",
  [WEAK]                  = "WEAK",
@@ -886,8 +948,8 @@ const char *closure_type_names[] = {
  [WHITEHOLE]             = "WHITEHOLE",
  [SMALL_MUT_ARR_PTRS_CLEAN] = "SMALL_MUT_ARR_PTRS_CLEAN",
  [SMALL_MUT_ARR_PTRS_DIRTY] = "SMALL_MUT_ARR_PTRS_DIRTY",
- [SMALL_MUT_ARR_PTRS_FROZEN0] = "SMALL_MUT_ARR_PTRS_FROZEN0",
- [SMALL_MUT_ARR_PTRS_FROZEN] = "SMALL_MUT_ARR_PTRS_FROZEN",
+ [SMALL_MUT_ARR_PTRS_FROZEN_DIRTY] = "SMALL_MUT_ARR_PTRS_FROZEN_DIRTY",
+ [SMALL_MUT_ARR_PTRS_FROZEN_CLEAN] = "SMALL_MUT_ARR_PTRS_FROZEN_CLEAN",
  [COMPACT_NFDATA]        = "COMPACT_NFDATA"
 };
 

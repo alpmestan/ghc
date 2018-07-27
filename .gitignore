@@ -35,6 +35,7 @@ __pycache__
 
 log
 tags
+TAGS
 
 autom4te.cache
 config.log
@@ -81,13 +82,13 @@ _darcs/
 /ghc/stage1/
 /ghc/stage2/
 /ghc/stage3/
-/iserv/stage2*/
-/iserv/dist/
+/utils/iserv/stage2*/
 
 # -----------------------------------------------------------------------------
 # specific generated files
 
 /bindist-list
+/bindist-list.uniq
 /bindistprep/
 /bindisttest/HelloWorld
 /bindisttest/
@@ -112,6 +113,8 @@ _darcs/
 /docs/users_guide/build-man
 /docs/users_guide/.doctrees-*
 /docs/users_guide/.doctrees/
+/docs/users_guide/ghc_packages.pyc
+/docs/users_guide/utils.pyc
 /driver/ghci/ghc-pkg-inplace
 /driver/ghci/ghci-inplace
 /driver/ghci/ghci.res
@@ -142,6 +145,7 @@ _darcs/
 /libraries/ghc-boot-th/GNUmakefile
 /libraries/ghc-boot-th/ghc-boot-th.cabal
 /libraries/ghc-boot-th/ghc.mk
+/libraries/ghc-heap/ghc-heap.cabal
 /libraries/ghci/GNUmakefile
 /libraries/ghci/ghci.cabal
 /libraries/ghci/ghc.mk
@@ -177,6 +181,11 @@ _darcs/
 /utils/mkUserGuidePart/mkUserGuidePart.cabal
 /utils/runghc/runghc.cabal
 /utils/gen-dll/gen-dll.cabal
+utils/lndir/fs.*
+utils/unlit/fs.*
+rts/fs.*
+libraries/base/include/fs.h
+libraries/base/cbits/fs.c
 
 /extra-gcc-opts
 /sdistprep

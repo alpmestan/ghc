@@ -13,7 +13,7 @@
 module SysTools (
         -- * Initialisation
         initSysTools,
-        initLlvmTargets,
+        initLlvmConfig,
 
         -- * Interface to system tools
         module SysTools.Tasks,
@@ -48,6 +48,7 @@ import ErrUtils
 import Platform
 import Util
 import DynFlags
+import Fingerprint
 
 import System.FilePath
 import System.IO
@@ -63,7 +64,7 @@ Note [How GHC finds toolchain utilities]
 
 SysTools.initSysProgs figures out exactly where all the auxiliary programs
 are, and initialises mutable variables to make it easy to call them.
-To to this, it makes use of definitions in Config.hs, which is a Haskell
+To do this, it makes use of definitions in Config.hs, which is a Haskell
 file containing variables whose value is figured out by the build system.
 
 Config.hs contains two sorts of things
@@ -109,30 +110,36 @@ stuff.
 ************************************************************************
 -}
 
-initLlvmTargets :: Maybe String
-                -> IO LlvmTargets
-initLlvmTargets mbMinusB
-  = do top_dir <- findTopDir mbMinusB
-       let llvmTargetsFile = top_dir </> "llvm-targets"
-       llvmTargetsStr <- readFile llvmTargetsFile
-       case maybeReadFuzzy llvmTargetsStr of
-         Just s -> return (fmap mkLlvmTarget <$> s)
-         Nothing -> pgmError ("Can't parse " ++ show llvmTargetsFile)
+initLlvmConfig :: String
+               -> IO LlvmConfig
+initLlvmConfig top_dir
+  = do
+      targets <- readAndParse "llvm-targets" mkLlvmTarget
+      passes <- readAndParse "llvm-passes" id
+      return (targets, passes)
   where
+    readAndParse name builder =
+      do let llvmConfigFile = top_dir </> name
+         llvmConfigStr <- readFile llvmConfigFile
+         case maybeReadFuzzy llvmConfigStr of
+           Just s -> return (fmap builder <$> s)
+           Nothing -> pgmError ("Can't parse " ++ show llvmConfigFile)
+
     mkLlvmTarget :: (String, String, String) -> LlvmTarget
     mkLlvmTarget (dl, cpu, attrs) = LlvmTarget dl cpu (words attrs)
 
 
-initSysTools :: Maybe String    -- Maybe TopDir path (without the '-B' prefix)
+initSysTools :: String          -- TopDir path
              -> IO Settings     -- Set all the mutable variables above, holding
                                 --      (a) the system programs
                                 --      (b) the package-config file
                                 --      (c) the GHC usage message
-initSysTools mbMinusB
-  = do top_dir <- findTopDir mbMinusB
-             -- see Note [topdir: How GHC finds its files]
+initSysTools top_dir
+  = do       -- see Note [topdir: How GHC finds its files]
              -- NB: top_dir is assumed to be in standard Unix
              -- format, '/' separated
+       mtool_dir <- findToolDir top_dir
+             -- see Note [tooldir: How GHC finds mingw and perl on Windows]
 
        let settingsFile = top_dir </> "settings"
            platformConstantsFile = top_dir </> "platformConstants"
@@ -157,6 +164,7 @@ initSysTools mbMinusB
        let getSetting key = case lookup key mySettings of
                             Just xs -> return $ expandTopDir top_dir xs
                             Nothing -> pgmError ("No entry for " ++ show key ++ " in " ++ show settingsFile)
+           getToolSetting key = expandToolDir mtool_dir <$> getSetting key
            getBooleanSetting key = case lookup key mySettings of
                                    Just "YES" -> return True
                                    Just "NO" -> return False
@@ -178,14 +186,15 @@ initSysTools mbMinusB
        targetHasSubsectionsViaSymbols <- readSetting "target has subsections via symbols"
        myExtraGccViaCFlags <- getSetting "GCC extra via C opts"
        -- On Windows, mingw is distributed with GHC,
-       -- so we look in TopDir/../mingw/bin
+       -- so we look in TopDir/../mingw/bin,
+       -- as well as TopDir/../../mingw/bin for hadrian.
        -- It would perhaps be nice to be able to override this
        -- with the settings file, but it would be a little fiddly
        -- to make that possible, so for now you can't.
-       gcc_prog <- getSetting "C compiler command"
+       gcc_prog <- getToolSetting "C compiler command"
        gcc_args_str <- getSetting "C compiler flags"
        gccSupportsNoPie <- getBooleanSetting "C compiler supports -no-pie"
-       cpp_prog <- getSetting "Haskell CPP command"
+       cpp_prog <- getToolSetting "Haskell CPP command"
        cpp_args_str <- getSetting "Haskell CPP flags"
        let unreg_gcc_args = if targetUnregisterised
                             then ["-DNO_REGS", "-DUSE_MINIINTERPRETER"]
@@ -203,7 +212,7 @@ initSysTools mbMinusB
        ldSupportsBuildId       <- getBooleanSetting "ld supports build-id"
        ldSupportsFilelist      <- getBooleanSetting "ld supports filelist"
        ldIsGnuLd               <- getBooleanSetting "ld is GNU ld"
-       perl_path <- getSetting "perl command"
+       perl_path <- getToolSetting "perl command"
 
        let pkgconfig_path = installed "package.conf.d"
            ghc_usage_msg_path  = installed "ghc-usage.txt"
@@ -216,14 +225,14 @@ initSysTools mbMinusB
              -- split is a Perl script
            split_script  = libexec cGHC_SPLIT_PGM
 
-       windres_path <- getSetting "windres command"
-       libtool_path <- getSetting "libtool command"
-       ar_path <- getSetting "ar command"
-       ranlib_path <- getSetting "ranlib command"
+       windres_path <- getToolSetting "windres command"
+       libtool_path <- getToolSetting "libtool command"
+       ar_path <- getToolSetting "ar command"
+       ranlib_path <- getToolSetting "ranlib command"
 
        tmpdir <- getTemporaryDirectory
 
-       touch_path <- getSetting "touch command"
+       touch_path <- getToolSetting "touch command"
 
        let -- On Win32 we don't want to rely on #!/bin/perl, so we prepend
            -- a call to Perl to get the invocation of split.
@@ -234,7 +243,7 @@ initSysTools mbMinusB
            (split_prog,  split_args)
              | isWindowsHost = (perl_path,    [Option split_script])
              | otherwise     = (split_script, [])
-       mkdll_prog <- getSetting "dllwrap command"
+       mkdll_prog <- getToolSetting "dllwrap command"
        let mkdll_args = []
 
        -- cpp is derived from gcc on all platforms
@@ -272,6 +281,7 @@ initSysTools mbMinusB
                     sTmpDir         = normalise tmpdir,
                     sGhcUsagePath   = ghc_usage_msg_path,
                     sGhciUsagePath  = ghci_usage_msg_path,
+                    sToolDir        = mtool_dir,
                     sTopDir         = top_dir,
                     sRawSettings    = mySettings,
                     sExtraGccViaCFlags = words myExtraGccViaCFlags,
@@ -302,6 +312,7 @@ initSysTools mbMinusB
                     sPgm_i   = iserv_prog,
                     sOpt_L       = [],
                     sOpt_P       = [],
+                    sOpt_P_fingerprint = fingerprint0,
                     sOpt_F       = [],
                     sOpt_c       = [],
                     sOpt_a       = [],
@@ -527,6 +538,7 @@ linkDynLib dflags0 o_files dep_packages
                  ++ map Option pkg_lib_path_opts
                  ++ map Option pkg_link_opts
                  ++ map Option pkg_framework_opts
+                 ++ [ Option "-Wl,-dead_strip_dylibs" ]
               )
         _ -> do
             -------------------------------------------------------------------
@@ -534,9 +546,12 @@ linkDynLib dflags0 o_files dep_packages
             -------------------------------------------------------------------
 
             let output_fn = case o_file of { Just s -> s; Nothing -> "a.out"; }
+                unregisterised = platformUnregisterised (targetPlatform dflags)
             let bsymbolicFlag = -- we need symbolic linking to resolve
-                                -- non-PIC intra-package-relocations
-                                ["-Wl,-Bsymbolic"]
+                                -- non-PIC intra-package-relocations for
+                                -- performance (where symbolic linking works)
+                                -- See Note [-Bsymbolic assumptions by GHC]
+                                ["-Wl,-Bsymbolic" | not unregisterised]
 
             runLink dflags (
                     map Option verbFlags
@@ -593,3 +608,27 @@ getFrameworkOpts dflags platform
     -- reverse because they're added in reverse order from the cmd line:
     framework_opts = concat [ ["-framework", fw]
                             | fw <- reverse frameworks ]
+
+{-
+Note [-Bsymbolic assumptions by GHC]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+GHC has a few assumptions about interaction of relocations in NCG and linker:
+
+1. -Bsymbolic resolves internal references when the shared library is linked,
+   which is important for performance.
+2. When there is a reference to data in a shared library from the main program,
+   the runtime linker relocates the data object into the main program using an
+   R_*_COPY relocation.
+3. If we used -Bsymbolic, then this results in multiple copies of the data
+   object, because some references have already been resolved to point to the
+   original instance. This is bad!
+
+We work around [3.] for native compiled code by avoiding the generation of
+R_*_COPY relocations.
+
+Unregisterised compiler can't evade R_*_COPY relocations easily thus we disable
+-Bsymbolic linking there.
+
+See related Trac tickets: #4210, #15338
+-}

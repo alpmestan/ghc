@@ -162,7 +162,7 @@ type (T [a] Bool).  For example, this is ill-typed
    f :: T p q -> String
    f (P x) = "urk"
 
-This is differnet to the situation with GADTs:
+This is different to the situation with GADTs:
 
    data S a where
      MkS :: Int -> S Bool
@@ -285,7 +285,7 @@ done by TcPatSyn.patSynBuilderOcc.
 Note [Pattern synonyms and the data type Type]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 The type of a pattern synonym is of the form (See Note
-[Pattern synonym signatures]):
+[Pattern synonym signatures] in TcSigs):
 
     forall univ_tvs. req => forall ex_tvs. prov => ...
 

@@ -12,8 +12,6 @@
 -- relegate as many changes as we can to just the Internal module, where it
 -- is safe to break things.
 
-{-# LANGUAGE CPP #-}
-
 module Language.Haskell.TH.Lib.Internal where
 
 import Language.Haskell.TH.Syntax hiding (Role, InjectivityAnn)
@@ -59,6 +57,7 @@ type TySynEqnQ           = Q TySynEqn
 type PatSynDirQ          = Q PatSynDir
 type PatSynArgsQ         = Q PatSynArgs
 type FamilyResultSigQ    = Q FamilyResultSig
+type DerivStrategyQ      = Q DerivStrategy
 
 -- must be defined here for DsMeta to find it
 type Role                = TH.Role
@@ -529,57 +528,19 @@ closedTypeFamilyD tc tvs result injectivity eqns =
      eqns1   <- sequenceA eqns
      return (ClosedTypeFamilyD (TypeFamilyHead tc tvs1 result1 injectivity) eqns1)
 
--- These were deprecated in GHC 8.0 with a plan to remove them in 8.2. If you
--- remove this check please also:
---   1. remove deprecated functions
---   2. remove CPP language extension from top of this module
---   3. remove the FamFlavour data type from Syntax module
---   4. make sure that all references to FamFlavour are gone from DsMeta,
---      Convert, TcSplice (follows from 3)
-#if __GLASGOW_HASKELL__ >= 804
-#error Remove deprecated familyNoKindD, familyKindD, closedTypeFamilyNoKindD and closedTypeFamilyKindD
-#endif
-
-{-# DEPRECATED familyNoKindD, familyKindD
-               "This function will be removed in the next stable release. Use openTypeFamilyD/dataFamilyD instead." #-}
-familyNoKindD :: FamFlavour -> Name -> [TyVarBndr] -> DecQ
-familyNoKindD flav tc tvs =
-    case flav of
-      TypeFam -> return $ OpenTypeFamilyD (TypeFamilyHead tc tvs NoSig Nothing)
-      DataFam -> return $ DataFamilyD tc tvs Nothing
-
-familyKindD :: FamFlavour -> Name -> [TyVarBndr] -> Kind -> DecQ
-familyKindD flav tc tvs k =
-    case flav of
-      TypeFam ->
-        return $ OpenTypeFamilyD (TypeFamilyHead tc tvs (KindSig k) Nothing)
-      DataFam -> return $ DataFamilyD tc tvs (Just k)
-
-{-# DEPRECATED closedTypeFamilyNoKindD, closedTypeFamilyKindD
-               "This function will be removed in the next stable release. Use closedTypeFamilyD instead." #-}
-closedTypeFamilyNoKindD :: Name -> [TyVarBndr] -> [TySynEqnQ] -> DecQ
-closedTypeFamilyNoKindD tc tvs eqns =
- do eqns1 <- sequence eqns
-    return (ClosedTypeFamilyD (TypeFamilyHead tc tvs NoSig Nothing) eqns1)
-
-closedTypeFamilyKindD :: Name -> [TyVarBndr] -> Kind -> [TySynEqnQ] -> DecQ
-closedTypeFamilyKindD tc tvs kind eqns =
- do eqns1 <- sequence eqns
-    return (ClosedTypeFamilyD (TypeFamilyHead tc tvs (KindSig kind) Nothing)
-            eqns1)
-
 roleAnnotD :: Name -> [Role] -> DecQ
 roleAnnotD name roles = return $ RoleAnnotD name roles
 
 standaloneDerivD :: CxtQ -> TypeQ -> DecQ
 standaloneDerivD = standaloneDerivWithStrategyD Nothing
 
-standaloneDerivWithStrategyD :: Maybe DerivStrategy -> CxtQ -> TypeQ -> DecQ
-standaloneDerivWithStrategyD ds ctxtq tyq =
+standaloneDerivWithStrategyD :: Maybe DerivStrategyQ -> CxtQ -> TypeQ -> DecQ
+standaloneDerivWithStrategyD mdsq ctxtq tyq =
   do
+    mds  <- sequenceA mdsq
     ctxt <- ctxtq
     ty   <- tyq
-    return $ StandaloneDerivD ds ctxt ty
+    return $ StandaloneDerivD mds ctxt ty
 
 defaultSigD :: Name -> TypeQ -> DecQ
 defaultSigD n tyq =
@@ -611,9 +572,22 @@ tySynEqn lhs rhs =
 cxt :: [PredQ] -> CxtQ
 cxt = sequence
 
-derivClause :: Maybe DerivStrategy -> [PredQ] -> DerivClauseQ
-derivClause ds p = do p' <- cxt p
-                      return $ DerivClause ds p'
+derivClause :: Maybe DerivStrategyQ -> [PredQ] -> DerivClauseQ
+derivClause mds p = do mds' <- sequenceA mds
+                       p'   <- cxt p
+                       return $ DerivClause mds' p'
+
+stockStrategy :: DerivStrategyQ
+stockStrategy = pure StockStrategy
+
+anyclassStrategy :: DerivStrategyQ
+anyclassStrategy = pure AnyclassStrategy
+
+newtypeStrategy :: DerivStrategyQ
+newtypeStrategy = pure NewtypeStrategy
+
+viaStrategy :: TypeQ -> DerivStrategyQ
+viaStrategy = fmap ViaStrategy
 
 normalC :: Name -> [BangTypeQ] -> ConQ
 normalC con strtys = liftM (NormalC con) $ sequence strtys
@@ -872,13 +846,6 @@ interruptible = Interruptible
 
 funDep :: [Name] -> [Name] -> FunDep
 funDep = FunDep
-
--------------------------------------------------------------------------------
--- *   FamFlavour
-
-typeFam, dataFam :: FamFlavour
-typeFam = TypeFam
-dataFam = DataFam
 
 -------------------------------------------------------------------------------
 -- *   RuleBndr

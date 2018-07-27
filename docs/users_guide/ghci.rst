@@ -1027,6 +1027,20 @@ The corresponding translation for an IO-typed ``e`` is
 Note that ``it`` is shadowed by the new value each time you evaluate a
 new expression, and the old value of ``it`` is lost.
 
+In order to stop the value ``it`` being bound on each command, the flag
+:ghc-flag:`-fno-it` can be set. The ``it`` variable can be the source
+of space leaks due to how shadowed declarations are handled by
+GHCi (see :ref:`ghci-decls`).
+
+.. ghc-flag:: -fno-it
+    :shortdesc: No longer set the special variable ``it``.
+    :type: dynamic
+    :reverse: -fno-no-it
+    :category:
+
+    When this flag is set, the variable ``it`` will no longer be set
+    to the result of the previously evaluated expression.
+
 .. _extended-default-rules:
 
 Type defaulting in GHCi
@@ -2011,6 +2025,17 @@ mostly obvious.
 
     It will create ``.ghci-history`` in current folder where GHCi is launched.
 
+.. ghc-flag:: -fghci-leak-check
+    :shortdesc: (Debugging only) check for space leaks when loading
+                new modules in GHCi.
+    :type: dynamic
+    :reverse: -fno-ghci-leak-check
+    :category:
+
+    (Debugging only) When loading new modules with ``:load``, check
+    that any previously loaded modules have been correctly garbage
+    collected. Emits messages if a leak is detected.
+
 Packages
 ~~~~~~~~
 
@@ -2062,17 +2087,28 @@ libraries, in this order:
 
 -  Paths specified using the :ghc-flag:`-L ⟨dir⟩` command-line option,
 
--  the standard library search path for your system, which on some
+-  The standard library search path for your system loader, which on some
    systems may be overridden by setting the :envvar:`LD_LIBRARY_PATH`
    environment variable.
 
+-  The linker standard library search can also be overriden on some systems using
+   the :envvar:`LIBRARY_PATH` environment variable. Because of some
+   implementation detail on Windows, setting ``LIBRARY_PATH`` will also extend
+   the system loader path for any library it finds. So often setting
+   :envvar:`LIBRARY_PATH` is enough.
+
 On systems with ``.dll``-style shared libraries, the actual library
-loaded will be ``lib.dll``. Again, GHCi will signal an error if it can't
-find the library.
+loaded will be ``lib.dll``, ``liblib.dll``. GHCi also has full support for
+import libraries, either Microsoft style ``.lib``, or GNU GCC style ``.a`` and
+``.dll.a`` libraries. If you have an import library it is advisable to always
+specify the import libary instead of the ``.dll``. e.g. use ``-lgcc` instead of
+``-llibgcc_s_seh-1``. Again, GHCi will signal an error if it can't find the
+library.
 
 GHCi can also load plain object files (``.o`` or ``.obj`` depending on
-your platform) from the command-line. Just add the name the object file
-to the command line.
+your platform) or static archives (``.a``) from the command-line. Just add the
+name the object file or library to the command line.
+On Windows GHCi also supports the ``big-obj`` format.
 
 Ordering of ``-l`` options matters: a library should be mentioned
 *before* the libraries it depends on (see :ref:`options-linker`).
@@ -2337,6 +2373,14 @@ commonly used commands.
     Delete one or more breakpoints by number (use :ghci-cmd:`:show breaks` to
     see the number of each breakpoint). The ``*`` form deletes all the
     breakpoints.
+
+.. ghci-cmd:: :doc; ⟨name⟩
+
+    (Experimental: This command will likely change significantly in GHC 8.8.)
+
+    Displays the documentation for the given name. Currently the command is
+    restricted to displaying the documentation directly on the declaration
+    in question, ignoring documentation for arguments, constructors etc.
 
 .. ghci-cmd:: :edit; ⟨file⟩
 

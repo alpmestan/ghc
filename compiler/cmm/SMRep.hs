@@ -47,9 +47,6 @@ module SMRep (
         pprWord8String, stringToWord8s
     ) where
 
-#include "../HsVersions.h"
-#include "../includes/MachDeps.h"
-
 import GhcPrelude
 
 import BasicTypes( ConTagZ )
@@ -282,10 +279,10 @@ isConRep (HeapRep _ _ _ Constr{}) = True
 isConRep _                        = False
 
 isThunkRep :: SMRep -> Bool
-isThunkRep (HeapRep _ _ _ Thunk{})         = True
+isThunkRep (HeapRep _ _ _ Thunk)           = True
 isThunkRep (HeapRep _ _ _ ThunkSelector{}) = True
-isThunkRep (HeapRep _ _ _ BlackHole{})     = True
-isThunkRep (HeapRep _ _ _ IndStatic{})     = True
+isThunkRep (HeapRep _ _ _ BlackHole)       = True
+isThunkRep (HeapRep _ _ _ IndStatic)       = True
 isThunkRep _                               = False
 
 isFunRep :: SMRep -> Bool
@@ -389,10 +386,10 @@ heapClosureSizeW _ _ = panic "SMRep.heapClosureSize"
 
 closureTypeHdrSize :: DynFlags -> ClosureTypeInfo -> WordOff
 closureTypeHdrSize dflags ty = case ty of
-                  Thunk{}         -> thunkHdrSize dflags
+                  Thunk           -> thunkHdrSize dflags
                   ThunkSelector{} -> thunkHdrSize dflags
-                  BlackHole{}     -> thunkHdrSize dflags
-                  IndStatic{}     -> thunkHdrSize dflags
+                  BlackHole       -> thunkHdrSize dflags
+                  IndStatic       -> thunkHdrSize dflags
                   _               -> fixedHdrSizeW dflags
         -- All thunks use thunkHdrSize, even if they are non-updatable.
         -- this is because we don't have separate closure types for
@@ -451,21 +448,19 @@ rtsClosureType rep
       HeapRep False 0 2 Fun{} -> FUN_0_2
       HeapRep False _ _ Fun{} -> FUN
 
-      HeapRep False 1 0 Thunk{} -> THUNK_1_0
-      HeapRep False 0 1 Thunk{} -> THUNK_0_1
-      HeapRep False 2 0 Thunk{} -> THUNK_2_0
-      HeapRep False 1 1 Thunk{} -> THUNK_1_1
-      HeapRep False 0 2 Thunk{} -> THUNK_0_2
-      HeapRep False _ _ Thunk{} -> THUNK
+      HeapRep False 1 0 Thunk -> THUNK_1_0
+      HeapRep False 0 1 Thunk -> THUNK_0_1
+      HeapRep False 2 0 Thunk -> THUNK_2_0
+      HeapRep False 1 1 Thunk -> THUNK_1_1
+      HeapRep False 0 2 Thunk -> THUNK_0_2
+      HeapRep False _ _ Thunk -> THUNK
 
       HeapRep False _ _ ThunkSelector{} ->  THUNK_SELECTOR
 
-      HeapRep True _ _ Fun{}    -> FUN_STATIC
-      HeapRep True _ _ Thunk{}  -> THUNK_STATIC
-
-      HeapRep False _ _ BlackHole{} -> BLACKHOLE
-
-      HeapRep False _ _ IndStatic{} -> IND_STATIC
+      HeapRep True _ _ Fun{}      -> FUN_STATIC
+      HeapRep True _ _ Thunk      -> THUNK_STATIC
+      HeapRep False _ _ BlackHole -> BLACKHOLE
+      HeapRep False _ _ IndStatic -> IND_STATIC
 
       _ -> panic "rtsClosureType"
 

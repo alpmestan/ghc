@@ -99,17 +99,18 @@ dsForeigns' fos = do
   where
    do_ldecl (L loc decl) = putSrcSpanDs loc (do_decl decl)
 
-   do_decl (ForeignImport { fd_name = id, fd_co = co, fd_fi = spec }) = do
+   do_decl (ForeignImport { fd_name = id, fd_i_ext = co, fd_fi = spec }) = do
       traceIf (text "fi start" <+> ppr id)
       let id' = unLoc id
       (bs, h, c) <- dsFImport id' co spec
       traceIf (text "fi end" <+> ppr id)
       return (h, c, [], bs)
 
-   do_decl (ForeignExport { fd_name = L _ id, fd_co = co
+   do_decl (ForeignExport { fd_name = L _ id, fd_e_ext = co
                           , fd_fe = CExport (L _ (CExportStatic _ ext_nm cconv)) _ }) = do
       (h, c, _, _) <- dsFExport id co ext_nm cconv False
       return (h, c, [id], [])
+   do_decl (XForeignDecl _) = panic "dsForeigns'"
 
 {-
 ************************************************************************
@@ -229,7 +230,8 @@ dsFCall fn_id co fcall mDeclHeader = do
                                       CApiConv safety)
                       c = includes
                        $$ fun_proto <+> braces (cRet <> semi)
-                      includes = vcat [ text "#include <" <> ftext h <> text ">"
+                      includes = vcat [ text "#include \"" <> ftext h
+                                        <> text "\""
                                       | Header _ h <- nub headers ]
                       fun_proto = cResType <+> pprCconv <+> ppr wrapperName <> parens argTypes
                       cRet

@@ -4,12 +4,12 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE Trustworthy #-}
-{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
 
 -----------------------------------------------------------------------------
@@ -126,7 +126,6 @@ import Data.Version( Version(..) )
 import GHC.Base hiding (Any, IntRep, FloatRep)
 import GHC.List
 import GHC.Num
-import GHC.Natural
 import GHC.Read
 import GHC.Show
 import Text.Read( reads )
@@ -511,7 +510,7 @@ data DataType = DataType
                         , datarep :: DataRep
                         }
 
-              deriving Show
+              deriving Show -- ^ @since 4.0.0.0
 
 -- | Representation of constructors. Note that equality on constructors
 -- with different types may not work -- i.e. the constructors for 'False' and
@@ -543,7 +542,9 @@ data DataRep = AlgRep [Constr]
              | CharRep
              | NoRep
 
-            deriving (Eq,Show)
+            deriving ( Eq   -- ^ @since 4.0.0.0
+                     , Show -- ^ @since 4.0.0.0
+                     )
 -- The list of constructors could be an array, a balanced tree, or others.
 
 
@@ -553,7 +554,9 @@ data ConstrRep = AlgConstr    ConIndex
                | FloatConstr  Rational
                | CharConstr   Char
 
-               deriving (Eq,Show)
+               deriving ( Eq   -- ^ @since 4.0.0.0
+                        , Show -- ^ @since 4.0.0.0
+                        )
 
 
 -- | Unique index for datatype constructors,
@@ -565,7 +568,9 @@ type ConIndex = Int
 data Fixity = Prefix
             | Infix     -- Later: add associativity and precedence
 
-            deriving (Eq,Show)
+            deriving ( Eq   -- ^ @since 4.0.0.0
+                     , Show -- ^ @since 4.0.0.0
+                     )
 
 
 ------------------------------------------------------------------------------
@@ -1277,6 +1282,9 @@ deriving instance Data a => Data (Last a)
 -- | @since 4.8.0.0
 deriving instance (Data (f a), Data a, Typeable f) => Data (Alt f a)
 
+-- | @since 4.12.0.0
+deriving instance (Data (f a), Data a, Typeable f) => Data (Ap f a)
+
 ----------------------------------------------------------------------------
 -- Data instances for GHC.Generics representations
 
@@ -1301,7 +1309,7 @@ deriving instance (Typeable f, Typeable g, Data p, Data (f p), Data (g p))
     => Data ((f :+: g) p)
 
 -- | @since 4.9.0.0
-deriving instance (Typeable (f :: * -> *), Typeable (g :: * -> *),
+deriving instance (Typeable (f :: Type -> Type), Typeable (g :: Type -> Type),
           Data p, Data (f (g p)))
     => Data ((f :.: g) p)
 
@@ -1326,3 +1334,9 @@ deriving instance Data SourceStrictness
 
 -- | @since 4.9.0.0
 deriving instance Data DecidedStrictness
+
+----------------------------------------------------------------------------
+-- Data instances for Data.Ord
+
+-- | @since 4.12.0.0
+deriving instance Data a => Data (Down a)

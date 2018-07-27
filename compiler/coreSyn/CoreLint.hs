@@ -11,7 +11,7 @@ A ``lint'' pass to check for Core correctness
 module CoreLint (
     lintCoreBindings, lintUnfolding,
     lintPassResult, lintInteractiveExpr, lintExpr,
-    lintAnnots,
+    lintAnnots, lintTypes,
 
     -- ** Debug output
     endPass, endPassIO,
@@ -202,8 +202,8 @@ points but not the RHSes of value bindings (thunks and functions).
 ************************************************************************
 
 These functions are not CoreM monad stuff, but they probably ought to
-be, and it makes a conveneint place.  place for them.  They print out
-stuff before and after core passes, and do Core Lint when necessary.
+be, and it makes a convenient place for them.  They print out stuff
+before and after core passes, and do Core Lint when necessary.
 -}
 
 endPass :: CoreToDo -> CoreProgram -> [CoreRule] -> CoreM ()
@@ -274,8 +274,7 @@ coreDumpFlag CoreDoWorkerWrapper      = Just Opt_D_dump_worker_wrapper
 coreDumpFlag CoreDoSpecialising       = Just Opt_D_dump_spec
 coreDumpFlag CoreDoSpecConstr         = Just Opt_D_dump_spec
 coreDumpFlag CoreCSE                  = Just Opt_D_dump_cse
-coreDumpFlag CoreDoVectorisation      = Just Opt_D_dump_vect
-coreDumpFlag CoreDesugar              = Just Opt_D_dump_ds
+coreDumpFlag CoreDesugar              = Just Opt_D_dump_ds_preopt
 coreDumpFlag CoreDesugarOpt           = Just Opt_D_dump_ds
 coreDumpFlag CoreTidy                 = Just Opt_D_dump_simpl
 coreDumpFlag CorePrep                 = Just Opt_D_dump_prep
@@ -407,7 +406,8 @@ lintCoreBindings dflags pass local_in_scope binds
   where
     in_scope_set = mkInScopeSet (mkVarSet local_in_scope)
 
-    flags = LF { lf_check_global_ids = check_globals
+    flags = defaultLintFlags
+               { lf_check_global_ids = check_globals
                , lf_check_inline_loop_breakers = check_lbs
                , lf_check_static_ptrs = check_static_ptrs }
 
@@ -531,7 +531,7 @@ lintSingleBinding top_lvl_flag rec_flag (binder,rhs)
        ; checkL ( isJoinId binder
                || not (isUnliftedType binder_ty)
                || (isNonRec rec_flag && exprOkForSpeculation rhs)
-               || exprIsLiteralString rhs)
+               || exprIsTickedString rhs)
            (badBndrTyMsg binder (text "unlifted"))
 
         -- Check that if the binder is top-level or recursive, it's not
@@ -539,14 +539,14 @@ lintSingleBinding top_lvl_flag rec_flag (binder,rhs)
         -- computation to perform, see Note [CoreSyn top-level string literals].
        ; checkL (not (isStrictId binder)
             || (isNonRec rec_flag && not (isTopLevel top_lvl_flag))
-            || exprIsLiteralString rhs)
+            || exprIsTickedString rhs)
            (mkStrictMsg binder)
 
         -- Check that if the binder is at the top level and has type Addr#,
         -- that it is a string literal, see
         -- Note [CoreSyn top-level string literals].
        ; checkL (not (isTopLevel top_lvl_flag && binder_ty `eqType` addrPrimTy)
-                 || exprIsLiteralString rhs)
+                 || exprIsTickedString rhs)
            (mkTopNonLitStrMsg binder)
 
        ; flags <- getLintFlags
@@ -657,18 +657,11 @@ lintRhs _bndr rhs = fmap lf_check_static_ptrs getLintFlags >>= go
     go _ = markAllJoinsBad $ lintCoreExpr rhs
 
 lintIdUnfolding :: Id -> Type -> Unfolding -> LintM ()
-lintIdUnfolding bndr bndr_ty (CoreUnfolding { uf_tmpl = rhs, uf_src = src })
-  | isStableSource src
+lintIdUnfolding bndr bndr_ty uf
+  | isStableUnfolding uf
+  , Just rhs <- maybeUnfoldingTemplate uf
   = do { ty <- lintRhs bndr rhs
        ; ensureEqTys bndr_ty ty (mkRhsMsg bndr (text "unfolding") ty) }
-
-lintIdUnfolding bndr bndr_ty (DFunUnfolding { df_con = con, df_bndrs = bndrs
-                                            , df_args = args })
-  = do { ty <- lintBinders LambdaBind bndrs $ \ bndrs' ->
-               do { res_ty <- lintCoreArgs (dataConRepType con) args
-                  ; return (mkLamTypes bndrs' res_ty) }
-       ; ensureEqTys bndr_ty ty (mkRhsMsg bndr (text "dfun unfolding") ty) }
-
 lintIdUnfolding  _ _ _
   = return ()       -- Do not Lint unstable unfoldings, because that leads
                     -- to exponential behaviour; c.f. CoreFVs.idUnfoldingVars
@@ -715,8 +708,7 @@ lintCoreExpr (Cast expr co)
   = do { expr_ty <- markAllJoinsBad $ lintCoreExpr expr
        ; co' <- applySubstCo co
        ; (_, k2, from_ty, to_ty, r) <- lintCoercion co'
-       ; lintL (classifiesTypeWithValues k2)
-               (text "Target of cast not # or *:" <+> ppr co)
+       ; checkValueKind k2 (text "target of cast" <+> quotes (ppr co))
        ; lintRole co' Representational r
        ; ensureEqTys from_ty expr_ty (mkCastErr expr co' from_ty expr_ty)
        ; return to_ty }
@@ -1123,7 +1115,7 @@ checkCaseAlts e ty alts =
   where
     (con_alts, maybe_deflt) = findDefault alts
 
-        -- Check that successive alternatives have increasing tags
+        -- Check that successive alternatives have strictly increasing tags
     increasing_tag (alt1 : rest@( alt2 : _)) = alt1 `ltAlt` alt2 && increasing_tag rest
     increasing_tag _                         = True
 
@@ -1275,6 +1267,19 @@ lintIdBndr top_lvl bind_site id linterF
 %************************************************************************
 -}
 
+lintTypes :: DynFlags
+          -> [TyCoVar]   -- Treat these as in scope
+          -> [Type]
+          -> Maybe MsgDoc -- Nothing => OK
+lintTypes dflags vars tys
+  | isEmptyBag errs = Nothing
+  | otherwise       = Just (pprMessageBag errs)
+  where
+    in_scope = emptyInScopeSet
+    (_warns, errs) = initL dflags defaultLintFlags in_scope linter
+    linter = lintBinders LambdaBind vars $ \_ ->
+             mapM_ lintInTy tys
+
 lintInTy :: InType -> LintM (LintedType, LintedKind)
 -- Types only, not kinds
 -- Check the type, and apply the substitution to it
@@ -1283,7 +1288,9 @@ lintInTy ty
   = addLoc (InType ty) $
     do  { ty' <- applySubstTy ty
         ; k  <- lintType ty'
-        ; lintKind k
+        ; lintKind k  -- The kind returned by lintType is already
+                      -- a LintedKind but we also want to check that
+                      -- k :: *, which lintKind does
         ; return (ty', k) }
 
 checkTyCon :: TyCon -> LintM ()
@@ -1311,25 +1318,25 @@ lintType ty@(AppTy t1 t2)
        ; lint_ty_app ty k1 [(t2,k2)] }
 
 lintType ty@(TyConApp tc tys)
-  | Just ty' <- coreView ty
-  = lintType ty'   -- Expand type synonyms, so that we do not bogusly complain
-                   --  about un-saturated type synonyms
+  | isTypeSynonymTyCon tc
+  = do { report_unsat <- lf_report_unsat_syns <$> getLintFlags
+       ; lintTySynApp report_unsat ty tc tys }
 
-  -- We should never see a saturated application of funTyCon; such applications
-  -- should be represented with the FunTy constructor. See Note [Linting
-  -- function types] and Note [Representation of function types].
   | isFunTyCon tc
   , tys `lengthIs` 4
+    -- We should never see a saturated application of funTyCon; such
+    -- applications should be represented with the FunTy constructor.
+    -- See Note [Linting function types] and
+    -- Note [Representation of function types].
   = failWithL (hang (text "Saturated application of (->)") 2 (ppr ty))
 
-  | isTypeSynonymTyCon tc || isTypeFamilyTyCon tc
-       -- Also type synonyms and type families
+  | isTypeFamilyTyCon tc -- Check for unsaturated type family
   , tys `lengthLessThan` tyConArity tc
   = failWithL (hang (text "Un-saturated type application") 2 (ppr ty))
 
   | otherwise
   = do { checkTyCon tc
-       ; ks <- mapM lintType tys
+       ; ks <- setReportUnsat True (mapM lintType tys)
        ; lint_ty_app ty (tyConKind tc) (tys `zip` ks) }
 
 -- arrows can related *unlifted* kinds, so this has to be separate from
@@ -1342,25 +1349,65 @@ lintType ty@(FunTy t1 t2)
 lintType t@(ForAllTy (TvBndr tv _vis) ty)
   = do { lintL (isTyVar tv) (text "Covar bound in type:" <+> ppr t)
        ; lintTyBndr tv $ \tv' ->
-          do { k <- lintType ty
-             ; lintL (not (tv' `elemVarSet` tyCoVarsOfType k))
-                     (text "Variable escape in forall:" <+> ppr t)
-             ; lintL (classifiesTypeWithValues k)
-                     (text "Non-* and non-# kind in forall:" <+> ppr t)
-             ; return k }}
+    do { k <- lintType ty
+       ; checkValueKind k (text "the body of forall:" <+> ppr t)
+       ; case occCheckExpand [tv'] k of  -- See Note [Stupid type synonyms]
+           Just k' -> return k'
+           Nothing -> failWithL (hang (text "Variable escape in forall:")
+                                    2 (vcat [ text "type:" <+> ppr t
+                                            , text "kind:" <+> ppr k ]))
+    }}
 
 lintType ty@(LitTy l) = lintTyLit l >> return (typeKind ty)
 
 lintType (CastTy ty co)
   = do { k1 <- lintType ty
        ; (k1', k2) <- lintStarCoercion co
-       ; ensureEqTys k1 k1' (mkCastErr ty co k1' k1)
+       ; ensureEqTys k1 k1' (mkCastTyErr ty co k1' k1)
        ; return k2 }
 
 lintType (CoercionTy co)
   = do { (k1, k2, ty1, ty2, r) <- lintCoercion co
        ; return $ mkHeteroCoercionType r k1 k2 ty1 ty2 }
 
+{- Note [Stupid type synonyms]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Consider (Trac #14939)
+   type Alg cls ob = ob
+   f :: forall (cls :: * -> Constraint) (b :: Alg cls *). b
+
+Here 'cls' appears free in b's kind, which would usually be illegal
+(because in (forall a. ty), ty's kind should not mention 'a'). But
+#in this case (Alg cls *) = *, so all is well.  Currently we allow
+this, and make Lint expand synonyms where necessary to make it so.
+
+c.f. TcUnify.occCheckExpand and CoreUtils.coreAltsType which deal
+with the same problem. A single systematic solution eludes me.
+-}
+
+-----------------
+lintTySynApp :: Bool -> Type -> TyCon -> [Type] -> LintM LintedKind
+-- See Note [Linting type synonym applications]
+lintTySynApp report_unsat ty tc tys
+  | report_unsat   -- Report unsaturated only if report_unsat is on
+  , tys `lengthLessThan` tyConArity tc
+  = failWithL (hang (text "Un-saturated type application") 2 (ppr ty))
+
+  | otherwise
+  = do { ks <- setReportUnsat False (mapM lintType tys)
+
+       ; when report_unsat $
+         case expandSynTyCon_maybe tc tys of
+            Nothing -> pprPanic "lintTySynApp" (ppr tc <+> ppr tys)
+                       -- Previous guards should have made this impossible
+            Just (tenv, rhs, tys') -> do { _ <- lintType expanded_ty
+                                         ; return () }
+                where
+                  expanded_ty = mkAppTys (substTy (mkTvSubstPrs tenv) rhs) tys'
+
+       ; lint_ty_app ty (tyConKind tc) (tys `zip` ks) }
+
+-----------------
 lintKind :: OutKind -> LintM ()
 -- If you edit this function, you may need to update the GHC formalism
 -- See Note [GHC Formalism]
@@ -1369,13 +1416,15 @@ lintKind k = do { sk <- lintType k
                          (addErrL (hang (text "Ill-kinded kind:" <+> ppr k)
                                       2 (text "has kind:" <+> ppr sk))) }
 
--- confirms that a type is really *
-lintStar :: SDoc -> OutKind -> LintM ()
-lintStar doc k
+-----------------
+-- Confirms that a type is really *, #, Constraint etc
+checkValueKind :: OutKind -> SDoc -> LintM ()
+checkValueKind k doc
   = lintL (classifiesTypeWithValues k)
           (text "Non-*-like kind when *-like expected:" <+> ppr k $$
            text "when checking" <+> doc)
 
+-----------------
 lintArrow :: SDoc -> LintedKind -> LintedKind -> LintM LintedKind
 -- If you edit this function, you may need to update the GHC formalism
 -- See Note [GHC Formalism]
@@ -1390,6 +1439,7 @@ lintArrow what k1 k2   -- Eg lintArrow "type or kind `blah'" k1 k2
                   2 (text "in" <+> what)
              , what <+> text "kind:" <+> ppr k ]
 
+-----------------
 lint_ty_app :: Type -> LintedKind -> [(LintedType,LintedKind)] -> LintM LintedKind
 lint_ty_app ty k tys
   = lint_app (text "type" <+> quotes (ppr ty)) k tys
@@ -1457,7 +1507,7 @@ lintCoreRule _ _ (BuiltinRule {})
 lintCoreRule fun fun_ty rule@(Rule { ru_name = name, ru_bndrs = bndrs
                                    , ru_args = args, ru_rhs = rhs })
   = lintBinders LambdaBind bndrs $ \ _ ->
-    do { lhs_ty <- foldM lintCoreArg fun_ty args
+    do { lhs_ty <- lintCoreArgs fun_ty args
        ; rhs_ty <- case isJoinId_maybe fun of
                      Just join_arity
                        -> do { checkL (args `lengthIs` join_arity) $
@@ -1467,7 +1517,8 @@ lintCoreRule fun fun_ty rule@(Rule { ru_name = name, ru_bndrs = bndrs
                      _ -> markAllJoinsBad $ lintCoreExpr rhs
        ; ensureEqTys lhs_ty rhs_ty $
          (rule_doc <+> vcat [ text "lhs type:" <+> ppr lhs_ty
-                            , text "rhs type:" <+> ppr rhs_ty ])
+                            , text "rhs type:" <+> ppr rhs_ty
+                            , text "fun_ty:" <+> ppr fun_ty ])
        ; let bad_bndrs = filter is_bad_bndr bndrs
 
        ; checkL (null bad_bndrs)
@@ -1555,8 +1606,8 @@ lintInCo co
 lintStarCoercion :: OutCoercion -> LintM (LintedType, LintedType)
 lintStarCoercion g
   = do { (k1, k2, t1, t2, r) <- lintCoercion g
-       ; lintStar (text "the kind of the left type in" <+> ppr g) k1
-       ; lintStar (text "the kind of the right type in" <+> ppr g) k2
+       ; checkValueKind k1 (text "the kind of the left type in" <+> ppr g)
+       ; checkValueKind k2 (text "the kind of the right type in" <+> ppr g)
        ; lintRole g Nominal r
        ; return (t1, t2) }
 
@@ -1566,14 +1617,27 @@ lintCoercion :: OutCoercion -> LintM (LintedKind, LintedKind, LintedType, Linted
 --
 -- If   lintCoercion co = (k1, k2, s1, s2, r)
 -- then co :: s1 ~r s2
---      s1 :: k2
+--      s1 :: k1
 --      s2 :: k2
 
 -- If you edit this function, you may need to update the GHC formalism
 -- See Note [GHC Formalism]
-lintCoercion (Refl r ty)
+lintCoercion (Refl ty)
+  = do { k <- lintType ty
+       ; return (k, k, ty, ty, Nominal) }
+
+lintCoercion (GRefl r ty MRefl)
   = do { k <- lintType ty
        ; return (k, k, ty, ty, r) }
+
+lintCoercion (GRefl r ty (MCo co))
+  = do { k <- lintType ty
+       ; (_, _, k1, k2, r') <- lintCoercion co
+       ; ensureEqTys k k1
+               (hang (text "GRefl coercion kind mis-match:" <+> ppr co)
+                   2 (vcat [ppr ty, ppr k, ppr k1]))
+       ; lintRole co Nominal r'
+       ; return (k1, k2, ty, mkCastTy ty co, r) }
 
 lintCoercion co@(TyConAppCo r tc cos)
   | tc `hasKey` funTyConKey
@@ -1595,7 +1659,7 @@ lintCoercion co@(TyConAppCo r tc cos)
 lintCoercion co@(AppCo co1 co2)
   | TyConAppCo {} <- co1
   = failWithL (text "TyConAppCo to the left of AppCo:" <+> ppr co)
-  | Refl _ (TyConApp {}) <- co1
+  | Just (TyConApp {}, _) <- isReflCo_maybe co1
   = failWithL (text "Refl (TyConApp ...) to the left of AppCo:" <+> ppr co)
   | otherwise
   = do { (k1,  k2,  s1, s2, r1) <- lintCoercion co1
@@ -1666,8 +1730,6 @@ lintCoercion co@(UnivCo prov r ty1 ty2)
                                     ; check_kinds kco k1 k2 }
 
            PluginProv _     -> return ()  -- no extra checks
-           HoleProv h       -> addErrL $
-                               text "Unfilled coercion hole:" <+> ppr h
 
        ; when (r /= Phantom && classifiesTypeWithValues k1
                             && classifiesTypeWithValues k2)
@@ -1733,12 +1795,13 @@ lintCoercion co@(TransCo co1 co2)
        ; lintRole co r1 r2
        ; return (k1a, k2b, ty1a, ty2b, r1) }
 
-lintCoercion the_co@(NthCo n co)
+lintCoercion the_co@(NthCo r0 n co)
   = do { (_, _, s, t, r) <- lintCoercion co
        ; case (splitForAllTy_maybe s, splitForAllTy_maybe t) of
          { (Just (tv_s, _ty_s), Just (tv_t, _ty_t))
              |  n == 0
-             -> return (ks, kt, ts, tt, Nominal)
+             -> do { lintRole the_co Nominal r0
+                   ; return (ks, kt, ts, tt, r0) }
              where
                ts = tyVarKind tv_s
                tt = tyVarKind tv_t
@@ -1752,7 +1815,8 @@ lintCoercion the_co@(NthCo n co)
                  -- see Note [NthCo and newtypes] in TyCoRep
              , tys_s `equalLength` tys_t
              , tys_s `lengthExceeds` n
-             -> return (ks, kt, ts, tt, tr)
+             -> do { lintRole the_co tr r0
+                   ; return (ks, kt, ts, tt, r0) }
              where
                ts = getNth tys_s n
                tt = getNth tys_t n
@@ -1833,12 +1897,6 @@ lintCoercion co@(AxiomInstCo con ind cos)
            ; return (extendTCvSubst subst_l ktv s',
                      extendTCvSubst subst_r ktv t') }
 
-lintCoercion (CoherenceCo co1 co2)
-  = do { (_, k2, t1, t2, r) <- lintCoercion co1
-       ; let lhsty = mkCastTy t1 co2
-       ; k1' <- lintType lhsty
-       ; return (k1', k2, lhsty, t2, r) }
-
 lintCoercion (KindCo co)
   = do { (k1, k2, _, _, _) <- lintCoercion co
        ; return (liftedTypeKind, liftedTypeKind, k1, k2, Nominal) }
@@ -1874,6 +1932,11 @@ lintCoercion this@(AxiomRuleCo co cs)
                           [ text "Expected:" <+> int (n + length es)
                           , text "Provided:" <+> int n ]
 
+lintCoercion (HoleCo h)
+  = do { addErrL $ text "Unfilled coercion hole:" <+> ppr h
+       ; lintCoercion (CoVarCo (coHoleCoVar h)) }
+
+
 ----------
 lintUnliftedCoVar :: CoVar -> LintM ()
 lintUnliftedCoVar cv
@@ -1906,8 +1969,8 @@ data LintEnv
 data LintFlags
   = LF { lf_check_global_ids           :: Bool -- See Note [Checking for global Ids]
        , lf_check_inline_loop_breakers :: Bool -- See Note [Checking for INLINE loop breakers]
-       , lf_check_static_ptrs          :: StaticPtrCheck
-                                             -- ^ See Note [Checking StaticPtrs]
+       , lf_check_static_ptrs :: StaticPtrCheck -- ^ See Note [Checking StaticPtrs]
+       , lf_report_unsat_syns :: Bool -- ^ See Note [Linting type synonym applications]
     }
 
 -- See Note [Checking StaticPtrs]
@@ -1924,6 +1987,7 @@ defaultLintFlags :: LintFlags
 defaultLintFlags = LF { lf_check_global_ids = False
                       , lf_check_inline_loop_breakers = True
                       , lf_check_static_ptrs = AllowAnywhere
+                      , lf_report_unsat_syns = True
                       }
 
 newtype LintM a =
@@ -1968,6 +2032,37 @@ rename type binders as we go, maintaining a substitution.
 The same substitution also supports let-type, current expressed as
         (/\(a:*). body) ty
 Here we substitute 'ty' for 'a' in 'body', on the fly.
+
+Note [Linting type synonym applications]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+When lining a type-synonym application
+  S ty1 .. tyn
+we behave as follows (Trac #15057):
+
+* If lf_report_unsat_syns = True, and S has arity < n,
+  complain about an unsaturated type synonym.
+
+* Switch off lf_report_unsat_syns, and lint ty1 .. tyn.
+
+  Reason: catch out of scope variables or other ill-kinded gubbins,
+  even if S discards that argument entirely. E.g. (#15012):
+     type FakeOut a = Int
+     type family TF a
+     type instance TF Int = FakeOut a
+  Here 'a' is out of scope; but if we expand FakeOut, we conceal
+  that out-of-scope error.
+
+  Reason for switching off lf_report_unsat_syns: with
+  LiberalTypeSynonyms, GHC allows unsaturated synonyms provided they
+  are saturated when the type is expanded. Example
+     type T f = f Int
+     type S a = a -> a
+     type Z = T S
+  In Z's RHS, S appears unsaturated, but it is saturated when T is expanded.
+
+* If lf_report_unsat_syns is on, expand the synonym application and
+  lint the result.  Reason: want to check that synonyms are saturated
+  when the type is expanded.
 -}
 
 instance Functor LintM where
@@ -2015,6 +2110,13 @@ initL dflags flags in_scope m
              , le_joins = emptyVarSet
              , le_loc = []
              , le_dynflags = dflags }
+
+setReportUnsat :: Bool -> LintM a -> LintM a
+-- Switch off lf_report_unsat_syns
+setReportUnsat ru thing_inside
+  = LintM $ \ env errs ->
+    let env' = env { le_flags = (le_flags env) { lf_report_unsat_syns = ru } }
+    in unLintM thing_inside env' errs
 
 getLintFlags :: LintM LintFlags
 getLintFlags = LintM $ \ env errs -> (Just (le_flags env), errs)
@@ -2375,14 +2477,32 @@ mkArityMsg binder
          ]
            where (StrictSig dmd_ty) = idStrictness binder
 -}
-mkCastErr :: Outputable casted => casted -> Coercion -> Type -> Type -> MsgDoc
-mkCastErr expr co from_ty expr_ty
-  = vcat [text "From-type of Cast differs from type of enclosed expression",
-          text "From-type:" <+> ppr from_ty,
-          text "Type of enclosed expr:" <+> ppr expr_ty,
-          text "Actual enclosed expr:" <+> ppr expr,
+mkCastErr :: CoreExpr -> Coercion -> Type -> Type -> MsgDoc
+mkCastErr expr = mk_cast_err "expression" "type" (ppr expr)
+
+mkCastTyErr :: Type -> Coercion -> Kind -> Kind -> MsgDoc
+mkCastTyErr ty = mk_cast_err "type" "kind" (ppr ty)
+
+mk_cast_err :: String -- ^ What sort of casted thing this is
+                      --   (\"expression\" or \"type\").
+            -> String -- ^ What sort of coercion is being used
+                      --   (\"type\" or \"kind\").
+            -> SDoc   -- ^ The thing being casted.
+            -> Coercion -> Type -> Type -> MsgDoc
+mk_cast_err thing_str co_str pp_thing co from_ty thing_ty
+  = vcat [from_msg <+> text "of Cast differs from" <+> co_msg
+            <+> text "of" <+> enclosed_msg,
+          from_msg <> colon <+> ppr from_ty,
+          text (capitalise co_str) <+> text "of" <+> enclosed_msg <> colon
+            <+> ppr thing_ty,
+          text "Actual" <+> enclosed_msg <> colon <+> pp_thing,
           text "Coercion used in cast:" <+> ppr co
          ]
+  where
+    co_msg, from_msg, enclosed_msg :: SDoc
+    co_msg       = text co_str
+    from_msg     = text "From-" <> co_msg
+    enclosed_msg = text "enclosed" <+> text thing_str
 
 mkBadUnivCoMsg :: LeftOrRight -> Coercion -> SDoc
 mkBadUnivCoMsg lr co

@@ -5,13 +5,13 @@
 {-# LANGUAGE StandaloneDeriving     #-}
 {-# LANGUAGE NoImplicitPrelude      #-}
 {-# LANGUAGE RankNTypes             #-}
-{-# LANGUAGE TypeInType             #-}
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE UndecidableInstances   #-}
 {-# LANGUAGE ExplicitNamespaces     #-}
 {-# LANGUAGE MultiParamTypeClasses  #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE TypeInType             #-}
+{-# LANGUAGE DataKinds              #-}
+{-# LANGUAGE PolyKinds              #-}
 {-# LANGUAGE Trustworthy            #-}
 
 -----------------------------------------------------------------------------
@@ -52,30 +52,6 @@ import GHC.Show
 import GHC.Read
 import GHC.Base
 import Data.Type.Bool
-
--- | Lifted, homogeneous equality. By lifted, we mean that it can be
--- bogus (deferred type error). By homogeneous, the two types @a@
--- and @b@ must have the same kind.
-class a ~~ b => (a :: k) ~ (b :: k)
-  -- See Note [The equality types story] in TysPrim
-  -- NB: All this class does is to wrap its superclass, which is
-  --     the "real", inhomogeneous equality; this is needed when
-  --     we have a Given (a~b), and we want to prove things from it
-  -- NB: Not exported, as (~) is magical syntax. That's also why there's
-  -- no fixity.
-
-  -- It's tempting to put functional dependencies on (~), but it's not
-  -- necessary because the functional-dependency coverage check looks
-  -- through superclasses, and (~#) is handled in that check.
-
--- | @since 4.9.0.0
-instance {-# INCOHERENT #-} a ~~ b => a ~ b
-  -- See Note [The equality types story] in TysPrim
-  -- If we have a Wanted (t1 ~ t2), we want to immediately
-  -- simplify it to (t1 ~~ t2) and solve that instead
-  --
-  -- INCOHERENT because we want to use this instance eagerly, even when
-  -- the tyvars are partially unknown.
 
 infix 4 :~:, :~~:
 
@@ -120,8 +96,13 @@ inner Refl = Refl
 outer :: (f a :~: g b) -> (f :~: g)
 outer Refl = Refl
 
+-- | @since 4.7.0.0
 deriving instance Eq   (a :~: b)
+
+-- | @since 4.7.0.0
 deriving instance Show (a :~: b)
+
+-- | @since 4.7.0.0
 deriving instance Ord  (a :~: b)
 
 -- | @since 4.7.0.0

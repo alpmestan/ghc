@@ -51,7 +51,6 @@ module Name (
         setNameLoc,
         tidyNameOcc,
         localiseName,
-        mkLocalisedOccName,
 
         nameSrcLoc, nameSrcSpan, pprNameDefnLoc, pprDefinedAt,
 
@@ -70,7 +69,7 @@ module Name (
         NamedThing(..),
         getSrcLoc, getSrcSpan, getOccString, getOccFS,
 
-        pprInfixName, pprPrefixName, pprModulePrefix,
+        pprInfixName, pprPrefixName, pprModulePrefix, pprNameUnqualified,
         nameStableString,
 
         -- Re-export the OccName stuff
@@ -80,7 +79,6 @@ module Name (
 import GhcPrelude
 
 import {-# SOURCE #-} TyCoRep( TyThing )
-import {-# SOURCE #-} PrelNames( starKindTyConKey, unicodeStarKindTyConKey )
 
 import OccName
 import Module
@@ -117,6 +115,7 @@ data Name = Name {
 -- (and real!) space leaks, due to the fact that we don't look at
 -- the SrcLoc in a Name all that often.
 
+-- See Note [About the NameSorts]
 data NameSort
   = External Module
 
@@ -153,7 +152,7 @@ instance NFData NameSort where
 data BuiltInSyntax = BuiltInSyntax | UserSyntax
 
 {-
-Notes about the NameSorts:
+Note [About the NameSorts]
 
 1.  Initially, top-level Ids (including locally-defined ones) get External names,
     and all other local Ids get Internal names
@@ -194,7 +193,7 @@ instance HasOccName Name where
 
 nameUnique              :: Name -> Unique
 nameOccName             :: Name -> OccName
-nameModule              :: Name -> Module
+nameModule              :: HasDebugCallStack => Name -> Module
 nameSrcLoc              :: Name -> SrcLoc
 nameSrcSpan             :: Name -> SrcSpan
 
@@ -262,7 +261,7 @@ nameIsLocalOrFrom :: Module -> Name -> Bool
 --                 you can find details (type, fixity, instances) in the
 --                     TcGblEnv or TcLclEnv
 --
--- The isInteractiveModule part is because successive interactions of a GCHi session
+-- The isInteractiveModule part is because successive interactions of a GHCi session
 -- each give rise to a fresh module (Ghci1, Ghci2, etc), but they all come
 -- from the magic 'interactive' package; and all the details are kept in the
 -- TcLclEnv, TcGblEnv, NOT in the HPT or EPT.
@@ -295,7 +294,7 @@ nameIsHomePackageImport this_mod
     this_pkg = moduleUnitId this_mod
 
 -- | Returns True if the Name comes from some other package: neither this
--- pacakge nor the interactive package.
+-- package nor the interactive package.
 nameIsFromExternalPackage :: UnitId -> Name -> Bool
 nameIsFromExternalPackage this_pkg name
   | Just mod <- nameModule_maybe name
@@ -414,18 +413,6 @@ tidyNameOcc name                            occ = name { n_occ = occ }
 localiseName :: Name -> Name
 localiseName n = n { n_sort = Internal }
 
--- |Create a localised variant of a name.
---
--- If the name is external, encode the original's module name to disambiguate.
--- SPJ says: this looks like a rather odd-looking function; but it seems to
---           be used only during vectorisation, so I'm not going to worry
-mkLocalisedOccName :: Module -> (Maybe String -> OccName -> OccName) -> Name -> OccName
-mkLocalisedOccName this_mod mk_occ name = mk_occ origin (nameOccName name)
-  where
-    origin
-      | nameIsLocalOrFrom this_mod name = Nothing
-      | otherwise                       = Just (moduleNameColons . moduleName . nameModule $ name)
-
 {-
 ************************************************************************
 *                                                                      *
@@ -467,10 +454,18 @@ stableNameCmp (Name { n_sort = s1, n_occ = occ1 })
 ************************************************************************
 -}
 
+-- | The same comments as for `Name`'s `Ord` instance apply.
 instance Eq Name where
     a == b = case (a `compare` b) of { EQ -> True;  _ -> False }
     a /= b = case (a `compare` b) of { EQ -> False; _ -> True }
 
+-- | __Caution__: This instance is implemented via `nonDetCmpUnique`, which
+-- means that the ordering is not stable across deserialization or rebuilds.
+--
+-- See `nonDetCmpUnique` for further information, and trac #15240 for a bug
+-- caused by improper use of this instance.
+
+-- For a deterministic lexicographic ordering, use `stableNameCmp`.
 instance Ord Name where
     a <= b = case (a `compare` b) of { LT -> True;  EQ -> True;  GT -> False }
     a <  b = case (a `compare` b) of { LT -> True;  EQ -> False; GT -> False }
@@ -534,6 +529,10 @@ pprName (Name {n_sort = sort, n_uniq = uniq, n_occ = occ})
       External mod            -> pprExternal sty uniq mod occ False UserSyntax
       System                  -> pprSystem sty uniq occ
       Internal                -> pprInternal sty uniq occ
+
+-- | Print the string of Name unqualifiedly directly.
+pprNameUnqualified :: Name -> SDoc
+pprNameUnqualified Name { n_occ = occ } = ppr_occ_name occ
 
 pprExternal :: PprStyle -> Unique -> Module -> OccName -> Bool -> BuiltInSyntax -> SDoc
 pprExternal sty uniq mod occ is_wired is_builtin
@@ -688,24 +687,6 @@ pprInfixName :: (Outputable a, NamedThing a) => a -> SDoc
 pprInfixName  n = pprInfixVar (isSymOcc (getOccName n)) (ppr n)
 
 pprPrefixName :: NamedThing a => a -> SDoc
-pprPrefixName thing
- | name `hasKey` starKindTyConKey || name `hasKey` unicodeStarKindTyConKey
- = ppr name   -- See Note [Special treatment for kind *]
- | otherwise
- = pprPrefixVar (isSymOcc (nameOccName name)) (ppr name)
+pprPrefixName thing = pprPrefixVar (isSymOcc (nameOccName name)) (ppr name)
  where
    name = getName thing
-
-{-
-Note [Special treatment for kind *]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Do not put parens around the kind '*'.  Even though it looks like
-an operator, it is really a special case.
-
-This pprPrefixName stuff is really only used when printing HsSyn,
-which has to be polymorphic in the name type, and hence has to go via
-the overloaded function pprPrefixOcc.  It's easier where we know the
-type being pretty printed; eg the pretty-printing code in TyCoRep.
-
-See Trac #7645, which led to this.
--}

@@ -654,6 +654,8 @@ outOfLineMachOp_table mop
 
         MO_BSwap w   -> fsLit $ bSwapLabel w
         MO_PopCnt w  -> fsLit $ popCntLabel w
+        MO_Pdep w    -> fsLit $ pdepLabel w
+        MO_Pext w    -> fsLit $ pextLabel w
         MO_Clz w     -> fsLit $ clzLabel w
         MO_Ctz w     -> fsLit $ ctzLabel w
         MO_AtomicRMW w amop -> fsLit $ atomicRMWLabel w amop
@@ -665,6 +667,7 @@ outOfLineMachOp_table mop
         MO_U_QuotRem {}  -> unsupported
         MO_U_QuotRem2 {} -> unsupported
         MO_Add2 {}       -> unsupported
+        MO_AddWordC {}   -> unsupported
         MO_SubWordC {}   -> unsupported
         MO_AddIntC {}    -> unsupported
         MO_SubIntC {}    -> unsupported

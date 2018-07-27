@@ -45,6 +45,11 @@ Flag terminfo
     Default: True
     Manual: True
 
+Flag integer-gmp
+    Description: Use integer-gmp
+    Manual: True
+    Default: False
+
 Library
     Default-Language: Haskell2010
     Exposed: False
@@ -56,14 +61,15 @@ Library
                    bytestring >= 0.9 && < 0.11,
                    binary     == 0.8.*,
                    time       >= 1.4 && < 1.9,
-                   containers >= 0.5 && < 0.6,
+                   containers >= 0.5 && < 0.7,
                    array      >= 0.1 && < 0.6,
                    filepath   >= 1   && < 1.5,
-                   template-haskell == 2.13.*,
+                   template-haskell == 2.14.*,
                    hpc        == 0.6.*,
                    transformers == 0.5.*,
                    ghc-boot   == @ProjectVersionMunged@,
                    ghc-boot-th == @ProjectVersionMunged@,
+                   ghc-heap   == @ProjectVersionMunged@,
                    ghci == @ProjectVersionMunged@
 
     if os(windows)
@@ -71,7 +77,7 @@ Library
     else
         if flag(terminfo)
             Build-Depends: terminfo == 0.4.*
-        Build-Depends: unix   == 2.7.*
+        Build-Depends: unix   >= 2.7 && < 2.9
 
     GHC-Options: -Wall
                  -Wno-name-shadowing
@@ -82,6 +88,11 @@ Library
     if flag(ghci)
         CPP-Options: -DGHCI
         Include-Dirs: ../rts/dist/build @FFIIncludeDir@
+
+    -- gmp internals are used by the GHCi debugger if available
+    if flag(integer-gmp)
+        CPP-Options: -DINTEGER_GMP
+        build-depends: integer-gmp >= 1.0.2
 
     Other-Extensions:
         BangPatterns
@@ -159,7 +170,6 @@ Library
         typecheck
         types
         utils
-        vectorise
 
     -- we use an explicit Prelude
     Default-Extensions:
@@ -290,6 +300,7 @@ Library
         CoreTidy
         CoreUnfold
         CoreUtils
+        CoreMap
         CoreSeq
         CoreStats
         MkCore
@@ -309,6 +320,7 @@ Library
         DsMonad
         DsUsage
         DsUtils
+        ExtractDocs
         Match
         MatchCon
         MatchLit
@@ -320,6 +332,7 @@ Library
         HsLit
         PlaceHolder
         HsExtension
+        HsInstances
         HsPat
         HsSyn
         HsTypes
@@ -390,8 +403,8 @@ Library
         TysPrim
         TysWiredIn
         CostCentre
+        CostCentreState
         ProfInit
-        SCCfinal
         RnBinds
         RnEnv
         RnExpr
@@ -434,6 +447,7 @@ Library
         WorkWrap
         WwLib
         FamInst
+        ClsInst
         Inst
         TcAnnotations
         TcArrows
@@ -465,12 +479,14 @@ Library
         TcRnTypes
         TcRules
         TcSimplify
+        TcHoleErrors
         TcErrors
         TcTyClsDecls
         TcTyDecls
         TcTypeable
         TcType
         TcEvidence
+        TcEvTerm
         TcUnify
         TcInteract
         TcCanonical
@@ -529,41 +545,11 @@ Library
         UniqMap
         UniqSet
         Util
-        Vectorise.Builtins.Base
-        Vectorise.Builtins.Initialise
-        Vectorise.Builtins
-        Vectorise.Monad.Base
-        Vectorise.Monad.Naming
-        Vectorise.Monad.Local
-        Vectorise.Monad.Global
-        Vectorise.Monad.InstEnv
-        Vectorise.Monad
-        Vectorise.Utils.Base
-        Vectorise.Utils.Closure
-        Vectorise.Utils.Hoisting
-        Vectorise.Utils.PADict
-        Vectorise.Utils.Poly
-        Vectorise.Utils
-        Vectorise.Generic.Description
-        Vectorise.Generic.PAMethods
-        Vectorise.Generic.PADict
-        Vectorise.Generic.PData
-        Vectorise.Type.Env
-        Vectorise.Type.Type
-        Vectorise.Type.TyConDecl
-        Vectorise.Type.Classify
-        Vectorise.Convert
-        Vectorise.Vect
-        Vectorise.Var
-        Vectorise.Env
-        Vectorise.Exp
-        Vectorise
         Hoopl.Block
         Hoopl.Collections
         Hoopl.Dataflow
         Hoopl.Graph
         Hoopl.Label
-        Hoopl.Unique
 --        CgInfoTbls used in ghci/DebuggerUtils
 --        CgHeapery  mkVirtHeapOffsets used in ghci
 
@@ -641,5 +627,4 @@ Library
             Debugger
             Linker
             RtClosureInspect
-            DebuggerUtils
             GHCi

@@ -92,11 +92,10 @@ module Type (
         mkAnonBinder,
         isAnonTyBinder, isNamedTyBinder,
         binderVar, binderVars, binderKind, binderArgFlag,
-        tyBinderType,
+        tyBinderType, tyBinderVar_maybe,
         binderRelevantType_maybe, caseBinder,
         isVisibleArgFlag, isInvisibleArgFlag, isVisibleBinder, isInvisibleBinder,
         tyConBindersTyBinders,
-        mkTyBinderTyConBinder,
 
         -- ** Common type constructors
         funTyCon,
@@ -121,6 +120,7 @@ module Type (
 
         -- ** Finding the kind of a type
         typeKind, isTypeLevPoly, resultIsLevPoly,
+        tcIsLiftedTypeKind, tcIsConstraintKind, tcReturnsConstraintKind,
 
         -- ** Common Kind
         liftedTypeKind,
@@ -134,7 +134,7 @@ module Type (
         noFreeVarsOfType,
         splitVisVarsOfType, splitVisVarsOfTypes,
         expandTypeSynonyms,
-        typeSize,
+        typeSize, occCheckExpand,
 
         -- * Well-scoped lists of variables
         dVarSetElemsWellScoped, toposortTyVars, tyCoVarsOfTypeWellScoped,
@@ -178,7 +178,7 @@ module Type (
         substTyUnchecked, substTysUnchecked, substThetaUnchecked,
         substTyWithUnchecked,
         substCoUnchecked, substCoWithUnchecked,
-        substTyVarBndr, substTyVar, substTyVars,
+        substTyVarBndr, substTyVarBndrs, substTyVar, substTyVars,
         cloneTyVarBndr, cloneTyVarBndrs, lookupTyVar,
 
         -- * Pretty-printing
@@ -188,8 +188,9 @@ module Type (
         pprSigmaType, ppSuggestExplicitKinds,
         pprTheta, pprThetaArrowTy, pprClassPred,
         pprKind, pprParendKind, pprSourceTyCon,
-        TyPrec(..), maybeParen,
+        PprPrec(..), topPrec, sigPrec, opPrec, funPrec, appPrec, maybeParen,
         pprTyVar, pprTyVars,
+        pprWithTYPE,
 
         -- * Tidying type related things up for printing
         tidyType,      tidyTypes,
@@ -228,19 +229,23 @@ import {-# SOURCE #-} TysWiredIn ( listTyCon, typeNatKind
                                  , typeSymbolKind, liftedTypeKind )
 import PrelNames
 import CoAxiom
-import {-# SOURCE #-} Coercion
+import {-# SOURCE #-} Coercion( mkNomReflCo, mkGReflCo, mkReflCo
+                              , mkTyConAppCo, mkAppCo, mkCoVarCo, mkAxiomRuleCo
+                              , mkForAllCo, mkFunCo, mkAxiomInstCo, mkUnivCo
+                              , mkSymCo, mkTransCo, mkNthCo, mkLRCo, mkInstCo
+                              , mkKindCo, mkSubCo, mkFunCo, mkAxiomInstCo
+                              , decomposePiCos, coercionKind, coercionType
+                              , isReflexiveCo, seqCo )
 
 -- others
 import Util
 import Outputable
 import FastString
 import Pair
+import DynFlags  ( gopt_set, GeneralFlag(Opt_PrintExplicitRuntimeReps) )
 import ListSetOps
 import Digraph
 import Unique ( nonDetCmpUnique )
-import SrcLoc  ( SrcSpan )
-import OccName ( OccName )
-import Name    ( mkInternalName )
 
 import Maybes           ( orElse )
 import Data.Maybe       ( isJust, mapMaybe )
@@ -323,33 +328,10 @@ See also Trac #11715, which tracks removing this inconsistency.
 
 -}
 
-{-# INLINE coreView #-}
-coreView :: Type -> Maybe Type
--- ^ This function Strips off the /top layer only/ of a type synonym
--- application (if any) its underlying representation type.
--- Returns Nothing if there is nothing to look through.
--- This function considers 'Constraint' to be a synonym of @TYPE LiftedRep@.
---
--- By being non-recursive and inlined, this case analysis gets efficiently
--- joined onto the case analysis that the caller is already doing
-coreView (TyConApp tc tys) | Just (tenv, rhs, tys') <- expandSynTyCon_maybe tc tys
-  = Just (mkAppTys (substTy (mkTvSubstPrs tenv) rhs) tys')
-               -- The free vars of 'rhs' should all be bound by 'tenv', so it's
-               -- ok to use 'substTy' here.
-               -- See also Note [The substitution invariant] in TyCoRep.
-               -- Its important to use mkAppTys, rather than (foldl AppTy),
-               -- because the function part might well return a
-               -- partially-applied type constructor; indeed, usually will!
-coreView (TyConApp tc [])
-  | isStarKindSynonymTyCon tc
-  = Just liftedTypeKind
-
-coreView _ = Nothing
-
 -- | Gives the typechecker view of a type. This unwraps synonyms but
 -- leaves 'Constraint' alone. c.f. coreView, which turns Constraint into
 -- TYPE LiftedRep. Returns Nothing if no unwrapping happens.
--- See also Note [coreView vs tcView] in Type.
+-- See also Note [coreView vs tcView]
 {-# INLINE tcView #-}
 tcView :: Type -> Maybe Type
 tcView (TyConApp tc tys) | Just (tenv, rhs, tys') <- expandSynTyCon_maybe tc tys
@@ -361,6 +343,28 @@ tcView (TyConApp tc tys) | Just (tenv, rhs, tys') <- expandSynTyCon_maybe tc tys
                -- because the function part might well return a
                -- partially-applied type constructor; indeed, usually will!
 tcView _ = Nothing
+
+{-# INLINE coreView #-}
+coreView :: Type -> Maybe Type
+-- ^ This function Strips off the /top layer only/ of a type synonym
+-- application (if any) its underlying representation type.
+-- Returns Nothing if there is nothing to look through.
+-- This function considers 'Constraint' to be a synonym of @TYPE LiftedRep@.
+--
+-- By being non-recursive and inlined, this case analysis gets efficiently
+-- joined onto the case analysis that the caller is already doing
+coreView ty@(TyConApp tc tys)
+  | Just (tenv, rhs, tys') <- expandSynTyCon_maybe tc tys
+  = Just (mkAppTys (substTy (mkTvSubstPrs tenv) rhs) tys')
+    -- This equation is exactly like tcView
+
+  -- At the Core level, Constraint = Type
+  -- See Note [coreView vs tcView]
+  | isConstraintKindCon tc
+  = ASSERT2( null tys, ppr ty )
+    Just liftedTypeKind
+
+coreView _ = Nothing
 
 -----------------------------------------------
 expandTypeSynonyms :: Type -> Type
@@ -399,13 +403,18 @@ expandTypeSynonyms ty
     go subst (FunTy arg res)
       = mkFunTy (go subst arg) (go subst res)
     go subst (ForAllTy (TvBndr tv vis) t)
-      = let (subst', tv') = substTyVarBndrCallback go subst tv in
+      = let (subst', tv') = substTyVarBndrUsing go subst tv in
         ForAllTy (TvBndr tv' vis) (go subst' t)
     go subst (CastTy ty co)  = mkCastTy (go subst ty) (go_co subst co)
     go subst (CoercionTy co) = mkCoercionTy (go_co subst co)
 
-    go_co subst (Refl r ty)
-      = mkReflCo r (go subst ty)
+    go_mco _     MRefl    = MRefl
+    go_mco subst (MCo co) = MCo (go_co subst co)
+
+    go_co subst (Refl ty)
+      = mkNomReflCo (go subst ty)
+    go_co subst (GRefl r ty mco)
+      = mkGReflCo r (go subst ty) (go_mco subst mco)
        -- NB: coercions are always expanded upon creation
     go_co subst (TyConAppCo r tc args)
       = mkTyConAppCo r tc (map (go_co subst) args)
@@ -426,31 +435,31 @@ expandTypeSynonyms ty
       = mkSymCo (go_co subst co)
     go_co subst (TransCo co1 co2)
       = mkTransCo (go_co subst co1) (go_co subst co2)
-    go_co subst (NthCo n co)
-      = mkNthCo n (go_co subst co)
+    go_co subst (NthCo r n co)
+      = mkNthCo r n (go_co subst co)
     go_co subst (LRCo lr co)
       = mkLRCo lr (go_co subst co)
     go_co subst (InstCo co arg)
       = mkInstCo (go_co subst co) (go_co subst arg)
-    go_co subst (CoherenceCo co1 co2)
-      = mkCoherenceCo (go_co subst co1) (go_co subst co2)
     go_co subst (KindCo co)
       = mkKindCo (go_co subst co)
     go_co subst (SubCo co)
       = mkSubCo (go_co subst co)
-    go_co subst (AxiomRuleCo ax cs) = AxiomRuleCo ax (map (go_co subst) cs)
+    go_co subst (AxiomRuleCo ax cs)
+      = AxiomRuleCo ax (map (go_co subst) cs)
+    go_co _ (HoleCo h)
+      = pprPanic "expandTypeSynonyms hit a hole" (ppr h)
 
     go_prov _     UnsafeCoerceProv    = UnsafeCoerceProv
     go_prov subst (PhantomProv co)    = PhantomProv (go_co subst co)
     go_prov subst (ProofIrrelProv co) = ProofIrrelProv (go_co subst co)
     go_prov _     p@(PluginProv _)    = p
-    go_prov _     (HoleProv h)        = pprPanic "expandTypeSynonyms hit a hole" (ppr h)
 
       -- the "False" and "const" are to accommodate the type of
-      -- substForAllCoBndrCallback, which is general enough to
+      -- substForAllCoBndrUsing, which is general enough to
       -- handle coercion optimization (which sometimes swaps the
       -- order of a coercion)
-    go_cobndr subst = substForAllCoBndrCallback False (go_co subst) subst
+    go_cobndr subst = substForAllCoBndrUsing False (go_co subst) subst
 
 {-
 ************************************************************************
@@ -499,10 +508,9 @@ data TyCoMapper env m
                          -- constructors?
       , tcm_tyvar :: env -> TyVar -> m Type
       , tcm_covar :: env -> CoVar -> m Coercion
-      , tcm_hole  :: env -> CoercionHole -> Role
-                  -> Type -> Type -> m Coercion
-          -- ^ What to do with coercion holes. See Note [Coercion holes] in
-          -- TyCoRep.
+      , tcm_hole  :: env -> CoercionHole -> m Coercion
+          -- ^ What to do with coercion holes.
+          -- See Note [Coercion holes] in TyCoRep.
 
       , tcm_tybinder :: env -> TyVar -> ArgFlag -> m (env, TyVar)
           -- ^ The returned env is used in the extended scope
@@ -541,7 +549,11 @@ mapCoercion mapper@(TyCoMapper { tcm_smart = smart, tcm_covar = covar
             env co
   = go co
   where
-    go (Refl r ty) = Refl r <$> mapType mapper env ty
+    go_mco MRefl    = return MRefl
+    go_mco (MCo co) = MCo <$> (go co)
+
+    go (Refl ty) = Refl <$> mapType mapper env ty
+    go (GRefl r ty mco) = mkgreflco r <$> mapType mapper env ty <*> (go_mco mco)
     go (TyConAppCo r tc args)
       = mktyconappco r tc <$> mapM go args
     go (AppCo c1 c2) = mkappco <$> go c1 <*> go c2
@@ -555,18 +567,16 @@ mapCoercion mapper@(TyCoMapper { tcm_smart = smart, tcm_covar = covar
     go (CoVarCo cv) = covar env cv
     go (AxiomInstCo ax i args)
       = mkaxiominstco ax i <$> mapM go args
-    go (UnivCo (HoleProv hole) r t1 t2)
-      = cohole env hole r t1 t2
+    go (HoleCo hole) = cohole env hole
     go (UnivCo p r t1 t2)
       = mkunivco <$> go_prov p <*> pure r
                  <*> mapType mapper env t1 <*> mapType mapper env t2
     go (SymCo co) = mksymco <$> go co
     go (TransCo c1 c2) = mktransco <$> go c1 <*> go c2
     go (AxiomRuleCo r cos) = AxiomRuleCo r <$> mapM go cos
-    go (NthCo i co)        = mknthco i <$> go co
+    go (NthCo r i co)      = mknthco r i <$> go co
     go (LRCo lr co)        = mklrco lr <$> go co
     go (InstCo co arg)     = mkinstco <$> go co <*> go arg
-    go (CoherenceCo c1 c2) = mkcoherenceco <$> go c1 <*> go c2
     go (KindCo co)         = mkkindco <$> go co
     go (SubCo co)          = mksubco <$> go co
 
@@ -574,19 +584,18 @@ mapCoercion mapper@(TyCoMapper { tcm_smart = smart, tcm_covar = covar
     go_prov (PhantomProv co)    = PhantomProv <$> go co
     go_prov (ProofIrrelProv co) = ProofIrrelProv <$> go co
     go_prov p@(PluginProv _)    = return p
-    go_prov (HoleProv _)        = panic "mapCoercion"
 
     ( mktyconappco, mkappco, mkaxiominstco, mkunivco
-      , mksymco, mktransco, mknthco, mklrco, mkinstco, mkcoherenceco
-      , mkkindco, mksubco, mkforallco)
+      , mksymco, mktransco, mknthco, mklrco, mkinstco
+      , mkkindco, mksubco, mkforallco, mkgreflco)
       | smart
       = ( mkTyConAppCo, mkAppCo, mkAxiomInstCo, mkUnivCo
-        , mkSymCo, mkTransCo, mkNthCo, mkLRCo, mkInstCo, mkCoherenceCo
-        , mkKindCo, mkSubCo, mkForAllCo )
+        , mkSymCo, mkTransCo, mkNthCo, mkLRCo, mkInstCo
+        , mkKindCo, mkSubCo, mkForAllCo, mkGReflCo )
       | otherwise
       = ( TyConAppCo, AppCo, AxiomInstCo, UnivCo
-        , SymCo, TransCo, NthCo, LRCo, InstCo, CoherenceCo
-        , KindCo, SubCo, ForAllCo )
+        , SymCo, TransCo, NthCo, LRCo, InstCo
+        , KindCo, SubCo, ForAllCo, GRefl )
 
 {-
 ************************************************************************
@@ -663,6 +672,11 @@ the type checker (e.g. when matching type-function equations).
 
 -- | Applies a type to another, as in e.g. @k a@
 mkAppTy :: Type -> Type -> Type
+  -- See Note [Respecting definitional equality], invariant (EQ1).
+mkAppTy (CastTy fun_ty co) arg_ty
+  | ([arg_co], res_co) <- decomposePiCos co (coercionKind co) [arg_ty]
+  = (fun_ty `mkAppTy` (arg_ty `mkCastTy` arg_co)) `mkCastTy` res_co
+
 mkAppTy (TyConApp tc tys) ty2 = mkTyConApp tc (tys ++ [ty2])
 mkAppTy ty1               ty2 = AppTy ty1 ty2
         -- Note that the TyConApp could be an
@@ -676,6 +690,15 @@ mkAppTy ty1               ty2 = AppTy ty1 ty2
 
 mkAppTys :: Type -> [Type] -> Type
 mkAppTys ty1                []   = ty1
+mkAppTys (CastTy fun_ty co) arg_tys  -- much more efficient then nested mkAppTy
+                                     -- Why do this? See (EQ1) of
+                                     -- Note [Respecting definitional equality]
+                                     -- in TyCoRep
+  = foldl AppTy ((mkAppTys fun_ty casted_arg_tys) `mkCastTy` res_co) leftovers
+  where
+    (arg_cos, res_co) = decomposePiCos co (coercionKind co) arg_tys
+    (args_to_cast, leftovers) = splitAtList arg_cos arg_tys
+    casted_arg_tys = zipWith mkCastTy args_to_cast arg_cos
 mkAppTys (TyConApp tc tys1) tys2 = mkTyConApp tc (tys1 ++ tys2)
 mkAppTys ty1                tys2 = foldl AppTy ty1 tys2
 
@@ -708,14 +731,14 @@ repSplitAppTy_maybe (TyConApp tc tys)
 
 repSplitAppTy_maybe _other = Nothing
 
--- this one doesn't braek apart (c => t).
+-- This one doesn't break apart (c => t).
 -- See Note [Decomposing fat arrow c=>t]
 -- Defined here to avoid module loops between Unify and TcType.
 tcRepSplitAppTy_maybe :: Type -> Maybe (Type,Type)
 -- ^ Does the AppTy split as in 'tcSplitAppTy_maybe', but assumes that
 -- any coreView stuff is already done. Refuses to look through (c => t)
 tcRepSplitAppTy_maybe (FunTy ty1 ty2)
-  | isConstraintKind (typeKind ty1)
+  | isPredTy ty1
   = Nothing  -- See Note [Decomposing fat arrow c=>t]
 
   | otherwise
@@ -730,18 +753,6 @@ tcRepSplitAppTy_maybe (TyConApp tc tys)
   , Just (tys', ty') <- snocView tys
   = Just (TyConApp tc tys', ty')    -- Never create unsaturated type family apps!
 tcRepSplitAppTy_maybe _other = Nothing
-
--- | Split a type constructor application into its type constructor and
--- applied types. Note that this may fail in the case of a 'FunTy' with an
--- argument of unknown kind 'FunTy' (e.g. @FunTy (a :: k) Int@. since the kind
--- of @a@ isn't of the form @TYPE rep@). Consequently, you may need to zonk your
--- type before using this function.
---
--- If you only need the 'TyCon', consider using 'tcTyConAppTyCon_maybe'.
-tcSplitTyConApp_maybe :: HasCallStack => Type -> Maybe (TyCon, [Type])
--- Defined here to avoid module loops between Unify and TcType.
-tcSplitTyConApp_maybe ty | Just ty' <- tcView ty = tcSplitTyConApp_maybe ty'
-tcSplitTyConApp_maybe ty                         = tcRepSplitTyConApp_maybe ty
 
 -- | Like 'tcSplitTyConApp_maybe' but doesn't look through type synonyms.
 tcRepSplitTyConApp_maybe :: HasCallStack => Type -> Maybe (TyCon, [Type])
@@ -1020,13 +1031,12 @@ piResultTys ty orig_args@(arg:args)
       | ForAllTy (TvBndr tv _) res <- ty
       = go (extendVarEnv tv_env tv arg) res args
 
-      | TyVarTy tv <- ty
-      , Just ty' <- lookupVarEnv tv_env tv
-        -- Deals with piResultTys (forall a. a) [forall b.b, Int]
-      = piResultTys ty' all_args
-
-      | otherwise
-      = pprPanic "piResultTys2" (ppr ty $$ ppr orig_args $$ ppr all_args)
+      | otherwise  -- See Note [Care with kind instantiation]
+      = ASSERT2( not (isEmptyVarEnv tv_env)
+               , ppr ty $$ ppr orig_args $$ ppr all_args )
+        go emptyTvSubstEnv
+          (substTy (mkTvSubst in_scope tv_env) ty)
+          all_args
 
 applyTysX :: [TyVar] -> Type -> [Type] -> Type
 -- applyTyxX beta-reduces (/\tvs. body_ty) arg_tys
@@ -1040,7 +1050,35 @@ applyTysX tvs body_ty arg_tys
     pp_stuff = vcat [ppr tvs, ppr body_ty, ppr arg_tys]
     n_tvs = length tvs
 
-{-
+
+
+{- Note [Care with kind instantiation]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Suppose we have
+  T :: forall k. k
+and we are finding the kind of
+  T (forall b. b -> b) * Int
+Then
+  T (forall b. b->b) :: k[ k :-> forall b. b->b]
+                     :: forall b. b -> b
+So
+  T (forall b. b->b) * :: (b -> b)[ b :-> *]
+                       :: * -> *
+
+In other words wwe must intantiate the forall!
+
+Similarly (Trac #154218)
+   S :: forall k f. k -> f k
+and we are finding the kind of
+   S * (* ->) Int Bool
+We have
+   S * (* ->) :: (k -> f k)[ k :-> *, f :-> (* ->)]
+              :: * -> * -> *
+So again we must instantiate.
+
+The same thing happens in ToIface.toIfaceAppArgsX.
+
+
 ---------------------------------------------------------------------
                                 TyConApp
                                 ~~~~~~~~
@@ -1130,10 +1168,6 @@ splitListTyConApp_maybe ty = case splitTyConApp_maybe ty of
   Just (tc,[e]) | tc == listTyCon -> Just e
   _other                          -> Nothing
 
--- | What is the role assigned to the next parameter of this type? Usually,
--- this will be 'Nominal', but if the type is a 'TyConApp', we may be able to
--- do better. The type does *not* have to be well-kinded when applied for this
--- to work!
 nextRole :: Type -> Role
 nextRole ty
   | Just (tc, tys) <- splitTyConApp_maybe ty
@@ -1160,47 +1194,6 @@ newTyConInstRhs tycon tys
                            ~~~~~~
 A casted type has its *kind* casted into something new.
 
-Note [No reflexive casts in types]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-As far as possible, we would like to maintain the following property:
-
-  (*) If (t1 `eqType` t2), then t1 and t2 are treated identically within GHC.
-
-The (*) property is very useful, because we have a tendency to compare two
-types to see if they're equal, and then arbitrarily choose one. We don't
-want this arbitrary choice to then matter later on. Maintaining (*) means
-that every function that looks at a structure of a type must think about
-casts. In places where we directly pattern-match, this consideration is
-forced by consideration of the CastTy constructor.
-
-But, when we call a splitXXX function, it's easy to ignore the possibility
-of casts. In particular, splitTyConApp is used extensively, and we don't
-want it to fail on (T a b c |> co). Happily, if we have
-  (T a b c |> co) `eqType` (T d e f)
-then co must be reflexive. Why? eqType checks that the kinds are equal, as
-well as checking that (a `eqType` d), (b `eqType` e), and (c `eqType` f).
-By the kind check, we know that (T a b c |> co) and (T d e f) have the same
-kind. So the only way that co could be non-reflexive is for (T a b c) to have
-a different kind than (T d e f). But because T's kind is closed (all tycon kinds
-are closed), the only way for this to happen is that one of the arguments has
-to differ, leading to a contradiction. Thus, co is reflexive.
-
-Accordingly, by eliminating reflexive casts, splitTyConApp need not worry
-about outermost casts to uphold (*).
-
-Unfortunately, that's not the end of the story. Consider comparing
-  (T a b c)      =?       (T a b |> (co -> <Type>)) (c |> sym co)
-These two types have the same kind (Type), but the left type is a TyConApp
-while the right type is not. To handle this case, we will have to implement
-some variant of the dreaded KPush algorithm (c.f. CoreOpt.pushCoDataCon).
-This stone is left unturned for now, meaning that we don't yet uphold (*).
-
-The other place where (*) will be hard to guarantee is in splitAppTy, because
-I (Richard E) can't think of a way to push coercions into AppTys. The good
-news here is that splitAppTy is not used all that much, and so all clients of
-that function can simply be told to use splitCastTy as well, in order to
-uphold (*). This, too, is left undone, for now.
-
 -}
 
 splitCastTy_maybe :: Type -> Maybe (Type, Coercion)
@@ -1210,16 +1203,17 @@ splitCastTy_maybe _                            = Nothing
 
 -- | Make a 'CastTy'. The Coercion must be nominal. Checks the
 -- Coercion for reflexivity, dropping it if it's reflexive.
--- See Note [No reflexive casts in types]
+-- See Note [Respecting definitional equality] in TyCoRep
 mkCastTy :: Type -> Coercion -> Type
-mkCastTy ty co | isReflexiveCo co = ty
+mkCastTy ty co | isReflexiveCo co = ty  -- (EQ2) from the Note
 -- NB: Do the slow check here. This is important to keep the splitXXX
 -- functions working properly. Otherwise, we may end up with something
 -- like (((->) |> something_reflexive_but_not_obviously_so) biz baz)
 -- fails under splitFunTy_maybe. This happened with the cheaper check
 -- in test dependent/should_compile/dynamic-paper.
 
-mkCastTy (CastTy ty co1) co2 = mkCastTy ty (co1 `mkTransCo` co2)
+mkCastTy (CastTy ty co1) co2 = mkCastTy ty (co1 `mkTransCo` co2) -- (EQ3) from the Note
+                          -- call mkCastTy again for the reflexivity check
 mkCastTy ty co = CastTy ty co
 
 tyConBindersTyBinders :: [TyConBinder] -> [TyBinder]
@@ -1351,8 +1345,9 @@ splitForAllTyVarBndrs :: Type -> ([TyVarBinder], Type)
 splitForAllTyVarBndrs ty = split ty ty []
   where
     split orig_ty ty bs | Just ty' <- coreView ty = split orig_ty ty' bs
-    split _       (ForAllTy b res) bs  = split res res (b:bs)
-    split orig_ty _                bs  = (reverse bs, orig_ty)
+    split _       (ForAllTy b res) bs = split res res (b:bs)
+    split orig_ty _                bs = (reverse bs, orig_ty)
+{-# INLINE splitForAllTyVarBndrs #-}
 
 -- | Checks whether this is a proper forall (with a named binder)
 isForAllTy :: Type -> Bool
@@ -1409,12 +1404,14 @@ splitPiTy ty
 -- | Split off all TyBinders to a type, splitting both proper foralls
 -- and functions
 splitPiTys :: Type -> ([TyBinder], Type)
-splitPiTys ty = split ty ty []
+splitPiTys ty = split ty ty
   where
-    split orig_ty ty bs | Just ty' <- coreView ty = split orig_ty ty' bs
-    split _       (ForAllTy b res) bs  = split res res (Named b  : bs)
-    split _       (FunTy arg res)  bs  = split res res (Anon arg : bs)
-    split orig_ty _                bs  = (reverse bs, orig_ty)
+    split orig_ty ty | Just ty' <- coreView ty = split orig_ty ty'
+    split _       (ForAllTy b res) = let (bs, ty) = split res res
+                                     in  (Named b : bs, ty)
+    split _       (FunTy arg res)  = let (bs, ty) = split res res
+                                     in  (Anon arg : bs, ty)
+    split orig_ty _                = ([], orig_ty)
 
 -- Like splitPiTys, but returns only *invisible* binders, including constraints
 -- Stops at the first visible binder
@@ -1499,6 +1496,10 @@ isNamedTyBinder :: TyBinder -> Bool
 isNamedTyBinder (Named {}) = True
 isNamedTyBinder (Anon {})  = False
 
+tyBinderVar_maybe :: TyBinder -> Maybe TyVar
+tyBinderVar_maybe (Named tv) = Just $ binderVar tv
+tyBinderVar_maybe _          = Nothing
+
 tyBinderType :: TyBinder -> Type
 -- Barely used
 tyBinderType (Named tvb) = binderKind tvb
@@ -1517,15 +1518,6 @@ caseBinder :: TyBinder           -- ^ binder to scrutinize
 caseBinder (Named v) f _ = f v
 caseBinder (Anon t)  _ d = d t
 
--- | Manufacture a new 'TyConBinder' from a 'TyBinder'. Anonymous
--- 'TyBinder's are still assigned names as 'TyConBinder's, so we need
--- the extra gunk with which to construct a 'Name'. Used when producing
--- tyConTyVars from a datatype kind signature. Defined here to avoid module
--- loops.
-mkTyBinderTyConBinder :: TyBinder -> SrcSpan -> Unique -> OccName -> TyConBinder
-mkTyBinderTyConBinder (Named (TvBndr tv argf)) _ _ _ = TvBndr tv (NamedTCB argf)
-mkTyBinderTyConBinder (Anon kind) loc uniq occ
-  = TvBndr (mkTyVar (mkInternalName uniq occ loc) kind) AnonTCB
 
 {-
 %************************************************************************
@@ -1558,6 +1550,56 @@ But there are a number of complications:
   want to print it nicely in error messages.
 -}
 
+-- | Split a type constructor application into its type constructor and
+-- applied types. Note that this may fail in the case of a 'FunTy' with an
+-- argument of unknown kind 'FunTy' (e.g. @FunTy (a :: k) Int@. since the kind
+-- of @a@ isn't of the form @TYPE rep@). Consequently, you may need to zonk your
+-- type before using this function.
+--
+-- If you only need the 'TyCon', consider using 'tcTyConAppTyCon_maybe'.
+tcSplitTyConApp_maybe :: HasCallStack => Type -> Maybe (TyCon, [Type])
+-- Defined here to avoid module loops between Unify and TcType.
+tcSplitTyConApp_maybe ty | Just ty' <- tcView ty = tcSplitTyConApp_maybe ty'
+tcSplitTyConApp_maybe ty                         = tcRepSplitTyConApp_maybe ty
+
+-- tcIsConstraintKind stuf only makes sense in the typechecker
+-- After that Constraint = Type
+-- See Note [coreView vs tcView]
+-- Defined here because it is used in isPredTy and tcRepSplitAppTy_maybe (sigh)
+tcIsConstraintKind :: Kind -> Bool
+tcIsConstraintKind ty
+  | Just (tc, args) <- tcSplitTyConApp_maybe ty    -- Note: tcSplit here
+  , isConstraintKindCon tc
+  = ASSERT2( null args, ppr ty ) True
+
+  | otherwise
+  = False
+
+-- | Is this kind equivalent to @*@?
+--
+-- This considers 'Constraint' to be distinct from @*@. For a version that
+-- treats them as the same type, see 'isLiftedTypeKind'.
+tcIsLiftedTypeKind :: Kind -> Bool
+tcIsLiftedTypeKind ty
+  | Just (type_tc, [arg]) <- tcSplitTyConApp_maybe ty
+  , type_tc `hasKey` tYPETyConKey
+  , Just (lifted_rep_tc, args) <- tcSplitTyConApp_maybe arg
+  , lifted_rep_tc `hasKey` liftedRepDataConKey
+  = ASSERT2( null args, ppr ty ) True
+  | otherwise
+  = False
+
+tcReturnsConstraintKind :: Kind -> Bool
+-- True <=> the Kind ultimately returns a Constraint
+--   E.g.  * -> Constraint
+--         forall k. k -> Constraint
+tcReturnsConstraintKind kind
+  | Just kind' <- tcView kind = tcReturnsConstraintKind kind'
+tcReturnsConstraintKind (ForAllTy _ ty) = tcReturnsConstraintKind ty
+tcReturnsConstraintKind (FunTy    _ ty) = tcReturnsConstraintKind ty
+tcReturnsConstraintKind (TyConApp tc _) = isConstraintKindCon tc
+tcReturnsConstraintKind _               = False
+
 -- | Is the type suitable to classify a given/wanted in the typechecker?
 isPredTy :: Type -> Bool
 -- See Note [isPredTy complications]
@@ -1585,7 +1627,7 @@ isPredTy ty = go ty []
 
     go_k :: Kind -> [KindOrType] -> Bool
     -- True <=> ('k' applied to 'kts') = Constraint
-    go_k k [] = isConstraintKind k
+    go_k k [] = tcIsConstraintKind k
     go_k k (arg:args) = case piResultTy_maybe k arg of
                           Just k' -> go_k k' args
                           Nothing -> WARN( True, text "isPredTy" <+> ppr ty )
@@ -1760,20 +1802,36 @@ eqRelRole :: EqRel -> Role
 eqRelRole NomEq  = Nominal
 eqRelRole ReprEq = Representational
 
-data PredTree = ClassPred Class [Type]
-              | EqPred EqRel Type Type
-              | IrredPred PredType
+data PredTree
+  = ClassPred Class [Type]
+  | EqPred EqRel Type Type
+  | IrredPred PredType
+  | ForAllPred [TyVarBinder] [PredType] PredType
+     -- ForAllPred: see Note [Quantified constraints] in TcCanonical
+  -- NB: There is no TuplePred case
+  --     Tuple predicates like (Eq a, Ord b) are just treated
+  --     as ClassPred, as if we had a tuple class with two superclasses
+  --        class (c1, c2) => (%,%) c1 c2
 
 classifyPredType :: PredType -> PredTree
 classifyPredType ev_ty = case splitTyConApp_maybe ev_ty of
     Just (tc, [_, _, ty1, ty2])
-      | tc `hasKey` eqReprPrimTyConKey    -> EqPred ReprEq ty1 ty2
-      | tc `hasKey` eqPrimTyConKey        -> EqPred NomEq ty1 ty2
-    Just (tc, tys)
-      | Just clas <- tyConClass_maybe tc  -> ClassPred clas tys
-    _                                     -> IrredPred ev_ty
+      | tc `hasKey` eqReprPrimTyConKey -> EqPred ReprEq ty1 ty2
+      | tc `hasKey` eqPrimTyConKey     -> EqPred NomEq ty1 ty2
 
-getClassPredTys :: PredType -> (Class, [Type])
+    Just (tc, tys)
+      | Just clas <- tyConClass_maybe tc
+      -> ClassPred clas tys
+
+    _ | (tvs, rho) <- splitForAllTyVarBndrs ev_ty
+      , (theta, pred) <- splitFunTys rho
+      , not (null tvs && null theta)
+      -> ForAllPred tvs theta pred
+
+      | otherwise
+      -> IrredPred ev_ty
+
+getClassPredTys :: HasDebugCallStack => PredType -> (Class, [Type])
 getClassPredTys ty = case getClassPredTys_maybe ty of
         Just (clas, tys) -> (clas, tys)
         Nothing          -> pprPanic "getClassPredTys" (ppr ty)
@@ -1827,6 +1885,11 @@ predTypeEqRel ty
 --
 -- This is a deterministic sorting operation
 -- (that is, doesn't depend on Uniques).
+--
+-- It is also meant to be stable: that is, variables should not
+-- be reordered unnecessarily. The implementation of this
+-- has been observed to be stable, though it is not proven to
+-- be so. See also Note [Ordering of implicit variables] in HsTypes
 toposortTyVars :: [TyCoVar] -> [TyCoVar]
 toposortTyVars tvs = reverse $
                      [ node_payload node | node <- topologicalSortG $
@@ -2080,7 +2143,39 @@ isValidJoinPointType arity ty
       | otherwise
       = False
 
-{-
+{- Note [Excess polymorphism and join points]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In principle, if a function would be a join point except that it fails
+the polymorphism rule (see Note [The polymorphism rule of join points] in
+CoreSyn), it can still be made a join point with some effort. This is because
+all tail calls must return the same type (they return to the same context!), and
+thus if the return type depends on an argument, that argument must always be the
+same.
+
+For instance, consider:
+
+  let f :: forall a. a -> Char -> [a]
+      f @a x c = ... f @a y 'a' ...
+  in ... f @Int 1 'b' ... f @Int 2 'c' ...
+
+(where the calls are tail calls). `f` fails the polymorphism rule because its
+return type is [a], where [a] is bound. But since the type argument is always
+'Int', we can rewrite it as:
+
+  let f' :: Int -> Char -> [Int]
+      f' x c = ... f' y 'a' ...
+  in ... f' 1 'b' ... f 2 'c' ...
+
+and now we can make f' a join point:
+
+  join f' :: Int -> Char -> [Int]
+       f' x c = ... jump f' y 'a' ...
+  in ... jump f' 1 'b' ... jump f' 2 'c' ...
+
+It's not clear that this comes up often, however. TODO: Measure how often and
+add this analysis if necessary.  See Trac #14620.
+
+
 ************************************************************************
 *                                                                      *
 \subsection{Sequencing on types}
@@ -2279,18 +2374,20 @@ nonDetCmpTypeX env orig_t1 orig_t2 =
 nonDetCmpTypesX :: RnEnv2 -> [Type] -> [Type] -> Ordering
 nonDetCmpTypesX _   []        []        = EQ
 nonDetCmpTypesX env (t1:tys1) (t2:tys2) = nonDetCmpTypeX env t1 t2
-                                      `thenCmp` nonDetCmpTypesX env tys1 tys2
+                                          `thenCmp`
+                                          nonDetCmpTypesX env tys1 tys2
 nonDetCmpTypesX _   []        _         = LT
 nonDetCmpTypesX _   _         []        = GT
 
 -------------
--- | Compare two 'TyCon's. NB: This should /never/ see the "star synonyms",
--- as recognized by Kind.isStarKindSynonymTyCon. See Note
--- [Kind Constraint and kind *] in Kind.
+-- | Compare two 'TyCon's. NB: This should /never/ see 'Constraint' (as
+-- recognized by Kind.isConstraintKindCon) which is considered a synonym for
+-- 'Type' in Core.
+-- See Note [Kind Constraint and kind Type] in Kind.
 -- See Note [nonDetCmpType nondeterminism]
 nonDetCmpTc :: TyCon -> TyCon -> Ordering
 nonDetCmpTc tc1 tc2
-  = ASSERT( not (isStarKindSynonymTyCon tc1) && not (isStarKindSynonymTyCon tc2) )
+  = ASSERT( not (isConstraintKindCon tc1) && not (isConstraintKindCon tc2) )
     u1 `nonDetCmpUnique` u2
   where
     u1  = tyConUnique tc1
@@ -2305,15 +2402,30 @@ nonDetCmpTc tc1 tc2
 -}
 
 typeKind :: HasDebugCallStack => Type -> Kind
-typeKind (TyConApp tc tys)     = piResultTys (tyConKind tc) tys
-typeKind (AppTy fun arg)       = piResultTy (typeKind fun) arg
-typeKind (LitTy l)             = typeLiteralKind l
-typeKind (FunTy {})            = liftedTypeKind
-typeKind (ForAllTy _ ty)       = typeKind ty
-typeKind (TyVarTy tyvar)       = tyVarKind tyvar
-typeKind (CastTy _ty co)       = pSnd $ coercionKind co
-typeKind (CoercionTy co)       = coercionType co
+typeKind (TyConApp tc tys) = piResultTys (tyConKind tc) tys
+typeKind (AppTy fun arg)   = typeKind_apps fun [arg]
+typeKind (LitTy l)         = typeLiteralKind l
+typeKind (FunTy {})        = liftedTypeKind
+typeKind (TyVarTy tyvar)   = tyVarKind tyvar
+typeKind (CastTy _ty co)   = pSnd $ coercionKind co
+typeKind (CoercionTy co)   = coercionType co
+typeKind ty@(ForAllTy {})  = case occCheckExpand tvs k of
+                               Just k' -> k'
+                               Nothing -> pprPanic "typeKind"
+                                            (ppr ty $$ ppr k $$ ppr tvs $$ ppr body)
+                           where
+                             (tvs, body) = splitForAllTys ty
+                             k           = typeKind body
 
+typeKind_apps :: HasDebugCallStack => Type -> [Type] -> Kind
+-- The sole purpose of the function is to accumulate
+-- the type arugments, so we can call piResultTys, rather than
+-- a succession of calls to piResultTy (which is asymptotically
+-- less efficient as the number of arguments increases)
+typeKind_apps (AppTy fun arg) args = typeKind_apps fun (arg:args)
+typeKind_apps fun             args = piResultTys (typeKind fun) args
+
+--------------------------
 typeLiteralKind :: TyLit -> Kind
 typeLiteralKind l =
   case l of
@@ -2344,6 +2456,157 @@ isTypeLevPoly = go
 resultIsLevPoly :: Type -> Bool
 resultIsLevPoly = isTypeLevPoly . snd . splitPiTys
 
+
+{- **********************************************************************
+*                                                                       *
+           Occurs check expansion
+%*                                                                      *
+%********************************************************************* -}
+
+{- Note [Occurs check expansion]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+(occurCheckExpand tv xi) expands synonyms in xi just enough to get rid
+of occurrences of tv outside type function arguments, if that is
+possible; otherwise, it returns Nothing.
+
+For example, suppose we have
+  type F a b = [a]
+Then
+  occCheckExpand b (F Int b) = Just [Int]
+but
+  occCheckExpand a (F a Int) = Nothing
+
+We don't promise to do the absolute minimum amount of expanding
+necessary, but we try not to do expansions we don't need to.  We
+prefer doing inner expansions first.  For example,
+  type F a b = (a, Int, a, [a])
+  type G b   = Char
+We have
+  occCheckExpand b (F (G b)) = Just (F Char)
+even though we could also expand F to get rid of b.
+-}
+
+occCheckExpand :: [Var] -> Type -> Maybe Type
+-- See Note [Occurs check expansion]
+-- We may have needed to do some type synonym unfolding in order to
+-- get rid of the variable (or forall), so we also return the unfolded
+-- version of the type, which is guaranteed to be syntactically free
+-- of the given type variable.  If the type is already syntactically
+-- free of the variable, then the same type is returned.
+occCheckExpand vs_to_avoid ty
+  = go (mkVarSet vs_to_avoid, emptyVarEnv) ty
+  where
+    go :: (VarSet, VarEnv TyVar) -> Type -> Maybe Type
+          -- The VarSet is the set of variables we are trying to avoid
+          -- The VarEnv carries mappings necessary
+          -- because of kind expansion
+    go cxt@(as, env) (TyVarTy tv')
+      | tv' `elemVarSet` as               = Nothing
+      | Just tv'' <- lookupVarEnv env tv' = return (mkTyVarTy tv'')
+      | otherwise                         = do { tv'' <- go_var cxt tv'
+                                               ; return (mkTyVarTy tv'') }
+
+    go _   ty@(LitTy {}) = return ty
+    go cxt (AppTy ty1 ty2) = do { ty1' <- go cxt ty1
+                                ; ty2' <- go cxt ty2
+                                ; return (mkAppTy ty1' ty2') }
+    go cxt (FunTy ty1 ty2) = do { ty1' <- go cxt ty1
+                                ; ty2' <- go cxt ty2
+                                ; return (mkFunTy ty1' ty2') }
+    go cxt@(as, env) (ForAllTy (TvBndr tv vis) body_ty)
+       = do { ki' <- go cxt (tyVarKind tv)
+            ; let tv' = setTyVarKind tv ki'
+                  env' = extendVarEnv env tv tv'
+                  as'  = as `delVarSet` tv
+            ; body' <- go (as', env') body_ty
+            ; return (ForAllTy (TvBndr tv' vis) body') }
+
+    -- For a type constructor application, first try expanding away the
+    -- offending variable from the arguments.  If that doesn't work, next
+    -- see if the type constructor is a type synonym, and if so, expand
+    -- it and try again.
+    go cxt ty@(TyConApp tc tys)
+      = case mapM (go cxt) tys of
+          Just tys' -> return (mkTyConApp tc tys')
+          Nothing | Just ty' <- tcView ty -> go cxt ty'
+                  | otherwise             -> Nothing
+                      -- Failing that, try to expand a synonym
+
+    go cxt (CastTy ty co) =  do { ty' <- go cxt ty
+                                ; co' <- go_co cxt co
+                                ; return (mkCastTy ty' co') }
+    go cxt (CoercionTy co) = do { co' <- go_co cxt co
+                                   ; return (mkCoercionTy co') }
+
+    ------------------
+    go_var cxt v = do { k' <- go cxt (varType v)
+                      ; return (setVarType v k') }
+           -- Works for TyVar and CoVar
+           -- See Note [Occurrence checking: look inside kinds]
+
+    ------------------
+    go_mco _   MRefl = return MRefl
+    go_mco ctx (MCo co) = MCo <$> go_co ctx co
+
+    ------------------
+    go_co cxt (Refl ty)                 = do { ty' <- go cxt ty
+                                             ; return (mkNomReflCo ty') }
+    go_co cxt (GRefl r ty mco)          = do { mco' <- go_mco cxt mco
+                                             ; ty' <- go cxt ty
+                                             ; return (mkGReflCo r ty' mco') }
+      -- Note: Coercions do not contain type synonyms
+    go_co cxt (TyConAppCo r tc args)    = do { args' <- mapM (go_co cxt) args
+                                             ; return (mkTyConAppCo r tc args') }
+    go_co cxt (AppCo co arg)            = do { co' <- go_co cxt co
+                                             ; arg' <- go_co cxt arg
+                                             ; return (mkAppCo co' arg') }
+    go_co cxt@(as, env) (ForAllCo tv kind_co body_co)
+      = do { kind_co' <- go_co cxt kind_co
+           ; let tv' = setTyVarKind tv $
+                       pFst (coercionKind kind_co')
+                 env' = extendVarEnv env tv tv'
+                 as'  = as `delVarSet` tv
+           ; body' <- go_co (as', env') body_co
+           ; return (ForAllCo tv' kind_co' body') }
+    go_co cxt (FunCo r co1 co2)         = do { co1' <- go_co cxt co1
+                                             ; co2' <- go_co cxt co2
+                                             ; return (mkFunCo r co1' co2') }
+    go_co cxt (CoVarCo c)               = do { c' <- go_var cxt c
+                                             ; return (mkCoVarCo c') }
+    go_co cxt (HoleCo h)                = do { c' <- go_var cxt (ch_co_var h)
+                                             ; return (HoleCo (h { ch_co_var = c' })) }
+    go_co cxt (AxiomInstCo ax ind args) = do { args' <- mapM (go_co cxt) args
+                                             ; return (mkAxiomInstCo ax ind args') }
+    go_co cxt (UnivCo p r ty1 ty2)      = do { p' <- go_prov cxt p
+                                             ; ty1' <- go cxt ty1
+                                             ; ty2' <- go cxt ty2
+                                             ; return (mkUnivCo p' r ty1' ty2') }
+    go_co cxt (SymCo co)                = do { co' <- go_co cxt co
+                                             ; return (mkSymCo co') }
+    go_co cxt (TransCo co1 co2)         = do { co1' <- go_co cxt co1
+                                             ; co2' <- go_co cxt co2
+                                             ; return (mkTransCo co1' co2') }
+    go_co cxt (NthCo r n co)            = do { co' <- go_co cxt co
+                                             ; return (mkNthCo r n co') }
+    go_co cxt (LRCo lr co)              = do { co' <- go_co cxt co
+                                             ; return (mkLRCo lr co') }
+    go_co cxt (InstCo co arg)           = do { co' <- go_co cxt co
+                                             ; arg' <- go_co cxt arg
+                                             ; return (mkInstCo co' arg') }
+    go_co cxt (KindCo co)               = do { co' <- go_co cxt co
+                                             ; return (mkKindCo co') }
+    go_co cxt (SubCo co)                = do { co' <- go_co cxt co
+                                             ; return (mkSubCo co') }
+    go_co cxt (AxiomRuleCo ax cs)       = do { cs' <- mapM (go_co cxt) cs
+                                             ; return (mkAxiomRuleCo ax cs') }
+
+    ------------------
+    go_prov _   UnsafeCoerceProv    = return UnsafeCoerceProv
+    go_prov cxt (PhantomProv co)    = PhantomProv <$> go_co cxt co
+    go_prov cxt (ProofIrrelProv co) = ProofIrrelProv <$> go_co cxt co
+    go_prov _   p@(PluginProv _)    = return p
+
+
 {-
 %************************************************************************
 %*                                                                      *
@@ -2370,7 +2633,8 @@ tyConsOfType ty
      go (CastTy ty co)              = go ty `unionUniqSets` go_co co
      go (CoercionTy co)             = go_co co
 
-     go_co (Refl _ ty)             = go ty
+     go_co (Refl ty)               = go ty
+     go_co (GRefl _ ty mco)        = go ty `unionUniqSets` go_mco mco
      go_co (TyConAppCo _ tc args)  = go_tc tc `unionUniqSets` go_cos args
      go_co (AppCo co arg)          = go_co co `unionUniqSets` go_co arg
      go_co (ForAllCo _ kind_co co) = go_co kind_co `unionUniqSets` go_co co
@@ -2378,21 +2642,23 @@ tyConsOfType ty
      go_co (AxiomInstCo ax _ args) = go_ax ax `unionUniqSets` go_cos args
      go_co (UnivCo p _ t1 t2)      = go_prov p `unionUniqSets` go t1 `unionUniqSets` go t2
      go_co (CoVarCo {})            = emptyUniqSet
+     go_co (HoleCo {})             = emptyUniqSet
      go_co (SymCo co)              = go_co co
      go_co (TransCo co1 co2)       = go_co co1 `unionUniqSets` go_co co2
-     go_co (NthCo _ co)            = go_co co
+     go_co (NthCo _ _ co)          = go_co co
      go_co (LRCo _ co)             = go_co co
      go_co (InstCo co arg)         = go_co co `unionUniqSets` go_co arg
-     go_co (CoherenceCo co1 co2)   = go_co co1 `unionUniqSets` go_co co2
      go_co (KindCo co)             = go_co co
      go_co (SubCo co)              = go_co co
      go_co (AxiomRuleCo _ cs)      = go_cos cs
+
+     go_mco MRefl    = emptyUniqSet
+     go_mco (MCo co) = go_co co
 
      go_prov UnsafeCoerceProv    = emptyUniqSet
      go_prov (PhantomProv co)    = go_co co
      go_prov (ProofIrrelProv co) = go_co co
      go_prov (PluginProv _)      = emptyUniqSet
-     go_prov (HoleProv _)        = emptyUniqSet
         -- this last case can happen from the tyConsOfType used from
         -- checkTauTvUpdate
 
@@ -2459,3 +2725,20 @@ setJoinResTy :: Int  -- Number of binders to skip
 -- INVARIANT: Same as for modifyJoinResTy
 setJoinResTy ar new_res_ty ty
   = modifyJoinResTy ar (const new_res_ty) ty
+
+{-
+%************************************************************************
+%*                                                                      *
+         Pretty-printing
+%*                                                                      *
+%************************************************************************
+
+Most pretty-printing is either in TyCoRep or IfaceType.
+
+-}
+
+-- | This variant preserves any use of TYPE in a type, effectively
+-- locally setting -fprint-explicit-runtime-reps.
+pprWithTYPE :: Type -> SDoc
+pprWithTYPE ty = updSDocDynFlags (flip gopt_set Opt_PrintExplicitRuntimeReps) $
+                 ppr ty

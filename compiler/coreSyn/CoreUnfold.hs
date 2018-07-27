@@ -65,8 +65,10 @@ import Bag
 import Util
 import Outputable
 import ForeignCall
+import Name
 
 import qualified Data.ByteString as BS
+import Data.List
 
 {-
 ************************************************************************
@@ -83,7 +85,7 @@ mkTopUnfolding dflags is_bottoming rhs
 mkImplicitUnfolding :: DynFlags -> CoreExpr -> Unfolding
 -- For implicit Ids, do a tiny bit of optimising first
 mkImplicitUnfolding dflags expr
-  = mkTopUnfolding dflags False (simpleOptExpr expr)
+  = mkTopUnfolding dflags False (simpleOptExpr dflags expr)
 
 -- Note [Top-level flag on inline rules]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -102,17 +104,17 @@ mkDFunUnfolding bndrs con ops
                   , df_args = map occurAnalyseExpr ops }
                   -- See Note [Occurrence analysis of unfoldings]
 
-mkWwInlineRule :: CoreExpr -> Arity -> Unfolding
-mkWwInlineRule expr arity
+mkWwInlineRule :: DynFlags -> CoreExpr -> Arity -> Unfolding
+mkWwInlineRule dflags expr arity
   = mkCoreUnfolding InlineStable True
-                   (simpleOptExpr expr)
+                   (simpleOptExpr dflags expr)
                    (UnfWhen { ug_arity = arity, ug_unsat_ok = unSaturatedOk
                             , ug_boring_ok = boringCxtNotOk })
 
 mkCompulsoryUnfolding :: CoreExpr -> Unfolding
 mkCompulsoryUnfolding expr         -- Used for things that absolutely must be unfolded
   = mkCoreUnfolding InlineCompulsory True
-                    (simpleOptExpr expr)
+                    (simpleOptExpr unsafeGlobalDynFlags expr)
                     (UnfWhen { ug_arity = 0    -- Arity of unfolding doesn't matter
                              , ug_unsat_ok = unSaturatedOk, ug_boring_ok = boringCxtOk })
 
@@ -124,7 +126,7 @@ mkWorkerUnfolding dflags work_fn
   | isStableSource src
   = mkCoreUnfolding src top_lvl new_tmpl guidance
   where
-    new_tmpl = simpleOptExpr (work_fn tmpl)
+    new_tmpl = simpleOptExpr dflags (work_fn tmpl)
     guidance = calcUnfoldingGuidance dflags False new_tmpl
 
 mkWorkerUnfolding _ _ _ = noUnfolding
@@ -139,7 +141,7 @@ mkInlineUnfolding expr
                     True         -- Note [Top-level flag on inline rules]
                     expr' guide
   where
-    expr' = simpleOptExpr expr
+    expr' = simpleOptExpr unsafeGlobalDynFlags expr
     guide = UnfWhen { ug_arity = manifestArity expr'
                     , ug_unsat_ok = unSaturatedOk
                     , ug_boring_ok = boring_ok }
@@ -153,7 +155,7 @@ mkInlineUnfoldingWithArity arity expr
                     True         -- Note [Top-level flag on inline rules]
                     expr' guide
   where
-    expr' = simpleOptExpr expr
+    expr' = simpleOptExpr unsafeGlobalDynFlags expr
     guide = UnfWhen { ug_arity = arity
                     , ug_unsat_ok = needSaturated
                     , ug_boring_ok = boring_ok }
@@ -163,14 +165,15 @@ mkInlinableUnfolding :: DynFlags -> CoreExpr -> Unfolding
 mkInlinableUnfolding dflags expr
   = mkUnfolding dflags InlineStable False False expr'
   where
-    expr' = simpleOptExpr expr
+    expr' = simpleOptExpr dflags expr
 
-specUnfolding :: [Var] -> (CoreExpr -> CoreExpr) -> Arity -> Unfolding -> Unfolding
+specUnfolding :: DynFlags -> [Var] -> (CoreExpr -> CoreExpr) -> Arity
+              -> Unfolding -> Unfolding
 -- See Note [Specialising unfoldings]
 -- specUnfolding spec_bndrs spec_app arity_decrease unf
 --   = \spec_bndrs. spec_app( unf )
 --
-specUnfolding spec_bndrs spec_app arity_decrease
+specUnfolding dflags spec_bndrs spec_app arity_decrease
               df@(DFunUnfolding { df_bndrs = old_bndrs, df_con = con, df_args = args })
   = ASSERT2( arity_decrease == count isId old_bndrs - count isId spec_bndrs, ppr df )
     mkDFunUnfolding spec_bndrs con (map spec_arg args)
@@ -182,11 +185,11 @@ specUnfolding spec_bndrs spec_app arity_decrease
       --       \new_bndrs. MkD (spec_app(\old_bndrs. <op1>)) ... ditto <opn>
       -- The ASSERT checks the value part of that
   where
-    spec_arg arg = simpleOptExpr (spec_app (mkLams old_bndrs arg))
+    spec_arg arg = simpleOptExpr dflags (spec_app (mkLams old_bndrs arg))
                    -- The beta-redexes created by spec_app will be
                    -- simplified away by simplOptExpr
 
-specUnfolding spec_bndrs spec_app arity_decrease
+specUnfolding dflags spec_bndrs spec_app arity_decrease
               (CoreUnfolding { uf_src = src, uf_tmpl = tmpl
                              , uf_is_top = top_lvl
                              , uf_guidance = old_guidance })
@@ -197,13 +200,13 @@ specUnfolding spec_bndrs spec_app arity_decrease
  = let guidance = UnfWhen { ug_arity     = old_arity - arity_decrease
                           , ug_unsat_ok  = unsat_ok
                           , ug_boring_ok = boring_ok }
-       new_tmpl = simpleOptExpr (mkLams spec_bndrs (spec_app tmpl))
+       new_tmpl = simpleOptExpr dflags (mkLams spec_bndrs (spec_app tmpl))
                    -- The beta-redexes created by spec_app will be
                    -- simplified away by simplOptExpr
 
    in mkCoreUnfolding src top_lvl new_tmpl guidance
 
-specUnfolding _ _ _ _ = noUnfolding
+specUnfolding _ _ _ _ _ = noUnfolding
 
 {- Note [Specialising unfoldings]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -698,7 +701,8 @@ sizeExpr dflags bOMB_OUT_SIZE top_args expr
 -- | Finds a nominal size of a string literal.
 litSize :: Literal -> Int
 -- Used by CoreUnfold.sizeExpr
-litSize (LitInteger {}) = 100   -- Note [Size of literal integers]
+litSize (LitNumber LitNumInteger _ _) = 100   -- Note [Size of literal integers]
+litSize (LitNumber LitNumNatural _ _) = 100
 litSize (MachStr str)   = 10 + 10 * ((BS.length str + 3) `div` 4)
         -- If size could be 0 then @f "x"@ might be too small
         -- [Sept03: make literal strings a bit bigger to avoid fruitless
@@ -1155,14 +1159,18 @@ callSiteInline dflags id active_unfolding lone_variable arg_infos cont_info
           | active_unfolding -> tryUnfolding dflags id lone_variable
                                     arg_infos cont_info unf_template is_top
                                     is_wf is_exp guidance
-          | otherwise -> traceInline dflags "Inactive unfolding:" (ppr id) Nothing
+          | otherwise -> traceInline dflags id "Inactive unfolding:" (ppr id) Nothing
         NoUnfolding      -> Nothing
         BootUnfolding    -> Nothing
         OtherCon {}      -> Nothing
         DFunUnfolding {} -> Nothing     -- Never unfold a DFun
 
-traceInline :: DynFlags -> String -> SDoc -> a -> a
-traceInline dflags str doc result
+traceInline :: DynFlags -> Id -> String -> SDoc -> a -> a
+traceInline dflags inline_id str doc result
+ | Just prefix <- inlineCheck dflags
+ =  if prefix `isPrefixOf` occNameString (getOccName inline_id)
+      then pprTrace str doc result
+      else result
  | dopt Opt_D_dump_inlinings dflags && dopt Opt_D_verbose_core2core dflags
  = pprTrace str doc result
  | otherwise
@@ -1175,25 +1183,25 @@ tryUnfolding dflags id lone_variable
              arg_infos cont_info unf_template is_top
              is_wf is_exp guidance
  = case guidance of
-     UnfNever -> traceInline dflags str (text "UnfNever") Nothing
+     UnfNever -> traceInline dflags id str (text "UnfNever") Nothing
 
      UnfWhen { ug_arity = uf_arity, ug_unsat_ok = unsat_ok, ug_boring_ok = boring_ok }
         | enough_args && (boring_ok || some_benefit || ufVeryAggressive dflags)
                 -- See Note [INLINE for small functions (3)]
-        -> traceInline dflags str (mk_doc some_benefit empty True) (Just unf_template)
+        -> traceInline dflags id str (mk_doc some_benefit empty True) (Just unf_template)
         | otherwise
-        -> traceInline dflags str (mk_doc some_benefit empty False) Nothing
+        -> traceInline dflags id str (mk_doc some_benefit empty False) Nothing
         where
           some_benefit = calc_some_benefit uf_arity
           enough_args = (n_val_args >= uf_arity) || (unsat_ok && n_val_args > 0)
 
      UnfIfGoodArgs { ug_args = arg_discounts, ug_res = res_discount, ug_size = size }
         | ufVeryAggressive dflags
-        -> traceInline dflags str (mk_doc some_benefit extra_doc True) (Just unf_template)
+        -> traceInline dflags id str (mk_doc some_benefit extra_doc True) (Just unf_template)
         | is_wf && some_benefit && small_enough
-        -> traceInline dflags str (mk_doc some_benefit extra_doc True) (Just unf_template)
+        -> traceInline dflags id str (mk_doc some_benefit extra_doc True) (Just unf_template)
         | otherwise
-        -> traceInline dflags str (mk_doc some_benefit extra_doc False) Nothing
+        -> traceInline dflags id str (mk_doc some_benefit extra_doc False) Nothing
         where
           some_benefit = calc_some_benefit (length arg_discounts)
           extra_doc = text "discounted size =" <+> int discounted_size
@@ -1241,8 +1249,8 @@ tryUnfolding dflags id lone_variable
           = True
           | otherwise
           = case cont_info of
-              CaseCtxt   -> not (lone_variable && is_wf)  -- Note [Lone variables]
-              ValAppCtxt -> True                              -- Note [Cast then apply]
+              CaseCtxt   -> not (lone_variable && is_exp)  -- Note [Lone variables]
+              ValAppCtxt -> True                           -- Note [Cast then apply]
               RuleArgCtxt -> uf_arity > 0  -- See Note [Unfold info lazy contexts]
               DiscArgCtxt -> uf_arity > 0  --
               RhsCtxt     -> uf_arity > 0  --
@@ -1388,9 +1396,10 @@ because the latter is strict.
         s = "foo"
         f = \x -> ...(error s)...
 
-Fundamentally such contexts should not encourage inlining because the
+Fundamentally such contexts should not encourage inlining because, provided
+the RHS is "expandable" (see Note [exprIsExpandable] in CoreUtils) the
 context can ``see'' the unfolding of the variable (e.g. case or a
-RULE) so there's no gain.  If the thing is bound to a value.
+RULE) so there's no gain.
 
 However, watch out:
 

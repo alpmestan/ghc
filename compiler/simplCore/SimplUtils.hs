@@ -30,7 +30,10 @@ module SimplUtils (
         addValArgTo, addCastTo, addTyArgTo,
         argInfoExpr, argInfoAppArgs, pushSimplifiedArgs,
 
-        abstractFloats
+        abstractFloats,
+
+        -- Utilities
+        isExitJoinId
     ) where
 
 #include "HsVersions.h"
@@ -446,23 +449,25 @@ contArgs cont
 
 
 -------------------
-mkArgInfo :: Id
+mkArgInfo :: SimplEnv
+          -> Id
           -> [CoreRule] -- Rules for function
           -> Int        -- Number of value args
           -> SimplCont  -- Context of the call
           -> ArgInfo
 
-mkArgInfo fun rules n_val_args call_cont
+mkArgInfo env fun rules n_val_args call_cont
   | n_val_args < idArity fun            -- Note [Unsaturated functions]
   = ArgInfo { ai_fun = fun, ai_args = [], ai_type = fun_ty
-            , ai_rules = fun_rules, ai_encl = False
+            , ai_rules = fun_rules
+            , ai_encl = False
             , ai_strs = vanilla_stricts
             , ai_discs = vanilla_discounts }
   | otherwise
   = ArgInfo { ai_fun = fun, ai_args = [], ai_type = fun_ty
             , ai_rules = fun_rules
-            , ai_encl = interestingArgContext rules call_cont
-            , ai_strs  = add_type_str fun_ty arg_stricts
+            , ai_encl  = interestingArgContext rules call_cont
+            , ai_strs  = arg_stricts
             , ai_discs = arg_discounts }
   where
     fun_ty = idType fun
@@ -480,7 +485,11 @@ mkArgInfo fun rules n_val_args call_cont
     vanilla_stricts  = repeat False
 
     arg_stricts
-      = case splitStrictSig (idStrictness fun) of
+      | not (sm_inline (seMode env))
+      = vanilla_stricts -- See Note [Do not expose strictness if sm_inline=False]
+      | otherwise
+      = add_type_str fun_ty $
+        case splitStrictSig (idStrictness fun) of
           (demands, result_info)
                 | not (demands `lengthExceeds` n_val_args)
                 ->      -- Enough args, use the strictness given.
@@ -502,26 +511,25 @@ mkArgInfo fun rules n_val_args call_cont
     add_type_str :: Type -> [Bool] -> [Bool]
     -- If the function arg types are strict, record that in the 'strictness bits'
     -- No need to instantiate because unboxed types (which dominate the strict
-    -- types) can't instantiate type variables.
-    -- add_type_str is done repeatedly (for each call); might be better
-    -- once-for-all in the function
+    --   types) can't instantiate type variables.
+    -- add_type_str is done repeatedly (for each call);
+    --   might be better once-for-all in the function
     -- But beware primops/datacons with no strictness
 
-    add_type_str
-      = go
-      where
-        go _ [] = []
-        go fun_ty strs            -- Look through foralls
-            | Just (_, fun_ty') <- splitForAllTy_maybe fun_ty       -- Includes coercions
-            = go fun_ty' strs
-        go fun_ty (str:strs)      -- Add strict-type info
-            | Just (arg_ty, fun_ty') <- splitFunTy_maybe fun_ty
-            = (str || Just False == isLiftedType_maybe arg_ty) : go fun_ty' strs
-               -- If the type is levity-polymorphic, we can't know whether it's
-               -- strict. isLiftedType_maybe will return Just False only when
-               -- we're sure the type is unlifted.
-        go _ strs
-            = strs
+    add_type_str _ [] = []
+    add_type_str fun_ty all_strs@(str:strs)
+      | Just (arg_ty, fun_ty') <- splitFunTy_maybe fun_ty        -- Add strict-type info
+      = (str || Just False == isLiftedType_maybe arg_ty)
+        : add_type_str fun_ty' strs
+          -- If the type is levity-polymorphic, we can't know whether it's
+          -- strict. isLiftedType_maybe will return Just False only when
+          -- we're sure the type is unlifted.
+
+      | Just (_, fun_ty') <- splitForAllTy_maybe fun_ty
+      = add_type_str fun_ty' all_strs     -- Look through foralls
+
+      | otherwise
+      = all_strs
 
 {- Note [Unsaturated functions]
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -531,6 +539,28 @@ Consider (test eyeball/inline4)
 where f has arity 2.  Then we do not want to inline 'x', because
 it'll just be floated out again.  Even if f has lots of discounts
 on its first argument -- it must be saturated for these to kick in
+
+Note [Do not expose strictness if sm_inline=False]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Trac #15163 showed a case in which we had
+
+  {-# INLINE [1] zip #-}
+  zip = undefined
+
+  {-# RULES "foo" forall as bs. stream (zip as bs) = ..blah... #-}
+
+If we expose zip's bottoming nature when simplifing the LHS of the
+RULE we get
+  {-# RULES "foo" forall as bs.
+                   stream (case zip of {}) = ..blah... #-}
+discarding the arguments to zip.  Usually this is fine, but on the
+LHS of a rule it's not, because 'as' and 'bs' are now not bound on
+the LHS.
+
+This is a pretty pathalogical example, so I'm not losing sleep over
+it, but the simplest solution was to check sm_inline; if it is False,
+which it is on the LHS of a rule (see updModeForRules), then don't
+make use of the strictness info for the function.
 -}
 
 
@@ -781,9 +811,9 @@ updModeForStableUnfoldings inline_rule_act current_mode
 updModeForRules :: SimplMode -> SimplMode
 -- See Note [Simplifying rules]
 updModeForRules current_mode
-  = current_mode { sm_phase  = InitialPhase
-                 , sm_inline = False
-                 , sm_rules  = False
+  = current_mode { sm_phase      = InitialPhase
+                 , sm_inline     = False  -- See Note [Do not expose strictness if sm_inline=False]
+                 , sm_rules      = False
                  , sm_eta_expand = False }
 
 {- Note [Simplifying rules]
@@ -935,8 +965,8 @@ mark it 'demanded', so when the RHS is simplified, it'll get an ArgOf
 continuation.
 -}
 
-activeUnfolding :: SimplEnv -> Id -> Bool
-activeUnfolding env id
+activeUnfolding :: SimplMode -> Id -> Bool
+activeUnfolding mode id
   | isCompulsoryUnfolding (realIdUnfolding id)
   = True   -- Even sm_inline can't override compulsory unfoldings
   | otherwise
@@ -947,8 +977,6 @@ activeUnfolding env id
       --  (a) they are active
       --  (b) sm_inline says so, except that for stable unfoldings
       --                         (ie pragmas) we inline anyway
-  where
-    mode = getMode env
 
 getUnfoldingInRuleMatch :: SimplEnv -> InScopeEnv
 -- When matching in RULE, we want to "look through" an unfolding
@@ -973,13 +1001,11 @@ getUnfoldingInRuleMatch env
      | otherwise           = isActive (sm_phase mode) (idInlineActivation id)
 
 ----------------------
-activeRule :: SimplEnv -> Activation -> Bool
+activeRule :: SimplMode -> Activation -> Bool
 -- Nothing => No rules at all
-activeRule env
+activeRule mode
   | not (sm_rules mode) = \_ -> False     -- Rewriting is off
   | otherwise           = isActive (sm_phase mode)
-  where
-    mode = getMode env
 
 {-
 ************************************************************************
@@ -1062,7 +1088,7 @@ spectral/mandel/Mandel.hs, where the mandelset function gets a useful
 let-float if you inline windowToViewport
 
 However, as usual for Gentle mode, do not inline things that are
-inactive in the intial stages.  See Note [Gentle mode].
+inactive in the initial stages.  See Note [Gentle mode].
 
 Note [Stable unfoldings and preInlineUnconditionally]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1086,6 +1112,11 @@ want PreInlineUnconditionally to second-guess it.  A live example is
 Trac #3736.
     c.f. Note [Stable unfoldings and postInlineUnconditionally]
 
+NB: if the pragama is INLINEABLE, then we don't want to behave int
+this special way -- an INLINEABLE pragam just says to GHC "inline this
+if you like".  But if there is a unique occurrence, we want to inline
+the stable unfolding, not the RHS.
+
 Note [Top-level bottoming Ids]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Don't inline top-level Ids that are bottoming, even if they are used just
@@ -1099,33 +1130,45 @@ is a term (not a coercion) so we can't necessarily inline the latter in
 the former.
 -}
 
-preInlineUnconditionally :: SimplEnv -> TopLevelFlag -> InId -> InExpr -> Bool
+preInlineUnconditionally
+    :: SimplEnv -> TopLevelFlag -> InId
+    -> InExpr -> StaticEnv  -- These two go together
+    -> Maybe SimplEnv       -- Returned env has extended substitution
 -- Precondition: rhs satisfies the let/app invariant
 -- See Note [CoreSyn let/app invariant] in CoreSyn
 -- Reason: we don't want to inline single uses, or discard dead bindings,
 --         for unlifted, side-effect-ful bindings
-preInlineUnconditionally env top_lvl bndr rhs
-  | not pre_inline_unconditionally           = False
-  | not active                               = False
-  | isStableUnfolding (idUnfolding bndr)     = False -- Note [Stable unfoldings and preInlineUnconditionally]
-  | isTopLevel top_lvl && isBottomingId bndr = False -- Note [Top-level bottoming Ids]
-  | isCoVar bndr                             = False -- Note [Do not inline CoVars unconditionally]
-  | isExitJoinId bndr                        = False
-  | otherwise = case idOccInfo bndr of
-                  IAmDead                    -> True -- Happens in ((\x.1) v)
-                  occ@OneOcc { occ_one_br = True }
-                                             -> try_once (occ_in_lam occ)
-                                                         (occ_int_cxt occ)
-                  _                          -> False
+preInlineUnconditionally env top_lvl bndr rhs rhs_env
+  | not pre_inline_unconditionally           = Nothing
+  | not active                               = Nothing
+  | isTopLevel top_lvl && isBottomingId bndr = Nothing -- Note [Top-level bottoming Ids]
+  | isCoVar bndr                             = Nothing -- Note [Do not inline CoVars unconditionally]
+  | isExitJoinId bndr                        = Nothing -- Note [Do not inline exit join points]
+                                                       -- in module Exitify
+  | not (one_occ (idOccInfo bndr))           = Nothing
+  | not (isStableUnfolding unf)              = Just (extend_subst_with rhs)
+
+  -- Note [Stable unfoldings and preInlineUnconditionally]
+  | isInlinablePragma inline_prag
+  , Just inl <- maybeUnfoldingTemplate unf   = Just (extend_subst_with inl)
+  | otherwise                                = Nothing
   where
-    pre_inline_unconditionally = gopt Opt_SimplPreInlining (seDynFlags env)
-    mode   = getMode env
-    active = isActive (sm_phase mode) act
-             -- See Note [pre/postInlineUnconditionally in gentle mode]
-    act = idInlineActivation bndr
-    try_once in_lam int_cxt     -- There's one textual occurrence
+    unf = idUnfolding bndr
+    extend_subst_with inl_rhs = extendIdSubst env bndr (mkContEx rhs_env inl_rhs)
+
+    one_occ IAmDead = True -- Happens in ((\x.1) v)
+    one_occ (OneOcc { occ_one_br = True      -- One textual occurrence
+                    , occ_in_lam = in_lam
+                    , occ_int_cxt = int_cxt })
         | not in_lam = isNotTopLevel top_lvl || early_phase
         | otherwise  = int_cxt && canInlineInLam rhs
+    one_occ _        = False
+
+    pre_inline_unconditionally = gopt Opt_SimplPreInlining (seDynFlags env)
+    mode   = getMode env
+    active = isActive (sm_phase mode) (inlinePragmaActivation inline_prag)
+             -- See Note [pre/postInlineUnconditionally in gentle mode]
+    inline_prag = idInlinePragma bndr
 
 -- Be very careful before inlining inside a lambda, because (a) we must not
 -- invalidate occurrence information, and (b) we want to avoid pushing a
@@ -2097,13 +2140,18 @@ mkCase1 dflags scrut bndr alts_ty alts = mkCase2 dflags scrut bndr alts_ty alts
 
 mkCase2 dflags scrut bndr alts_ty alts
   | -- See Note [Scrutinee Constant Folding]
-    case alts of  -- Not if there is just a DEFAULT alterantive
+    case alts of  -- Not if there is just a DEFAULT alternative
       [(DEFAULT,_,_)] -> False
       _               -> True
   , gopt Opt_CaseFolding dflags
   , Just (scrut', tx_con, mk_orig) <- caseRules dflags scrut
   = do { bndr' <- newId (fsLit "lwild") (exprType scrut')
-       ; alts' <- mapM  (tx_alt tx_con mk_orig bndr') alts
+
+       ; alts' <- mapMaybeM (tx_alt tx_con mk_orig bndr') alts
+                  -- mapMaybeM: discard unreachable alternatives
+                  -- See Note [Unreachable caseRules alternatives]
+                  -- in PrelRules
+
        ; mkCase3 dflags scrut' bndr' alts_ty $
          add_default (re_sort alts')
        }
@@ -2127,19 +2175,14 @@ mkCase2 dflags scrut bndr alts_ty alts
     -- to construct an expression equivalent to the original one, for use
     -- in the DEFAULT case
 
+    tx_alt :: (AltCon -> Maybe AltCon) -> (Id -> CoreExpr) -> Id
+           -> CoreAlt -> SimplM (Maybe CoreAlt)
     tx_alt tx_con mk_orig new_bndr (con, bs, rhs)
-      | DataAlt dc <- con', not (isNullaryRepDataCon dc)
-      = -- For non-nullary data cons we must invent some fake binders
-        -- See Note [caseRules for dataToTag] in PrelRules
-        do { us <- getUniquesM
-           ; let (ex_tvs, arg_ids) = dataConRepInstPat us dc
-                                         (tyConAppArgs (idType new_bndr))
-           ; return (con', ex_tvs ++ arg_ids, rhs') }
-      | otherwise
-      = return (con', [], rhs')
+      = case tx_con con of
+          Nothing   -> return Nothing
+          Just con' -> do { bs' <- mk_new_bndrs new_bndr con'
+                          ; return (Just (con', bs', rhs')) }
       where
-        con' = tx_con con
-
         rhs' | isDeadBinder bndr = rhs
              | otherwise         = bindNonRec bndr orig_val rhs
 
@@ -2148,22 +2191,60 @@ mkCase2 dflags scrut bndr alts_ty alts
                       LitAlt l   -> Lit l
                       DataAlt dc -> mkConApp2 dc (tyConAppArgs (idType bndr)) bs
 
+    mk_new_bndrs new_bndr (DataAlt dc)
+      | not (isNullaryRepDataCon dc)
+      = -- For non-nullary data cons we must invent some fake binders
+        -- See Note [caseRules for dataToTag] in PrelRules
+        do { us <- getUniquesM
+           ; let (ex_tvs, arg_ids) = dataConRepInstPat us dc
+                                        (tyConAppArgs (idType new_bndr))
+           ; return (ex_tvs ++ arg_ids) }
+    mk_new_bndrs _ _ = return []
 
     re_sort :: [CoreAlt] -> [CoreAlt]  -- Re-sort the alternatives to
     re_sort alts = sortBy cmpAlt alts  -- preserve the #case_invariants#
 
     add_default :: [CoreAlt] -> [CoreAlt]
-    -- TagToEnum may change a boolean True/False set of alternatives
-    -- to LitAlt 0#/1# alterantives.  But literal alternatives always
-    -- have a DEFAULT (I think).  So add it.
+    -- See Note [Literal cases]
     add_default ((LitAlt {}, bs, rhs) : alts) = (DEFAULT, bs, rhs) : alts
     add_default alts                          = alts
+
+{- Note [Literal cases]
+~~~~~~~~~~~~~~~~~~~~~~~
+If we have
+  case tagToEnum (a ># b) of
+     False -> e1
+     True  -> e2
+
+then caseRules for TagToEnum will turn it into
+  case tagToEnum (a ># b) of
+     0# -> e1
+     1# -> e2
+
+Since the case is exhaustive (all cases are) we can convert it to
+  case tagToEnum (a ># b) of
+     DEFAULT -> e1
+     1#      -> e2
+
+This may generate sligthtly better code (although it should not, since
+all cases are exhaustive) and/or optimise better.  I'm not certain that
+it's necessary, but currenty we do make this change.  We do it here,
+NOT in the TagToEnum rules (see "Beware" in Note [caseRules for tagToEnum]
+in PrelRules)
+-}
 
 --------------------------------------------------
 --      Catch-all
 --------------------------------------------------
 mkCase3 _dflags scrut bndr alts_ty alts
   = return (Case scrut bndr alts_ty alts)
+
+-- See Note [Exitification] and Note [Do not inline exit join points] in Exitify.hs
+-- This lives here (and not in Id) because occurrence info is only valid on
+-- InIds, so it's crucial that isExitJoinId is only called on freshly
+-- occ-analysed code. It's not a generic function you can call anywhere.
+isExitJoinId :: Var -> Bool
+isExitJoinId id = isJoinId id && isOneOcc (idOccInfo id) && occ_in_lam (idOccInfo id)
 
 {-
 Note [Dead binders]

@@ -29,9 +29,9 @@ module TysWiredIn (
 
         -- * Ordering
         orderingTyCon,
-        ltDataCon, ltDataConId,
-        eqDataCon, eqDataConId,
-        gtDataCon, gtDataConId,
+        ordLTDataCon, ordLTDataConId,
+        ordEQDataCon, ordEQDataConId,
+        ordGTDataCon, ordGTDataConId,
         promotedLTDataCon, promotedEQDataCon, promotedGTDataCon,
 
         -- * Boxing primitive types
@@ -91,17 +91,12 @@ module TysWiredIn (
         -- * Kinds
         typeNatKindCon, typeNatKind, typeSymbolKindCon, typeSymbolKind,
         isLiftedTypeKindTyConName, liftedTypeKind, constraintKind,
-        starKindTyCon, starKindTyConName,
-        unicodeStarKindTyCon, unicodeStarKindTyConName,
         liftedTypeKindTyCon, constraintKindTyCon,
-
-        -- * Parallel arrays
-        mkPArrTy,
-        parrTyCon, parrFakeCon, isPArrTyCon, isPArrFakeCon,
-        parrTyCon_RDR, parrTyConName,
+        liftedTypeKindTyConName,
 
         -- * Equality predicates
-        heqTyCon, heqClass, heqDataCon,
+        heqTyCon, heqTyConName, heqClass, heqDataCon,
+        eqTyCon, eqTyConName, eqClass, eqDataCon, eqTyCon_RDR,
         coercibleTyCon, coercibleTyConName, coercibleDataCon, coercibleClass,
 
         -- * RuntimeRep and friends
@@ -150,7 +145,7 @@ import TyCon
 import Class            ( Class, mkClass )
 import RdrName
 import Name
-import NameEnv          ( NameEnv, mkNameEnv, lookupNameEnv )
+import NameEnv          ( NameEnv, mkNameEnv, lookupNameEnv, lookupNameEnv_NF )
 import NameSet          ( NameSet, mkNameSet, elemNameSet )
 import BasicTypes       ( Arity, Boxity(..), TupleSort(..), ConTagZ,
                           SourceText(..) )
@@ -220,8 +215,8 @@ wiredInTyCons = [ -- Units are not treated like other tuples, because then
                 , word8TyCon
                 , listTyCon
                 , maybeTyCon
-                , parrTyCon
                 , heqTyCon
+                , eqTyCon
                 , coercibleTyCon
                 , typeNatKindCon
                 , typeSymbolKindCon
@@ -230,8 +225,6 @@ wiredInTyCons = [ -- Units are not treated like other tuples, because then
                 , vecElemTyCon
                 , constraintKindTyCon
                 , liftedTypeKindTyCon
-                , starKindTyCon
-                , unicodeStarKindTyCon
                 ]
 
 mkWiredInTyConName :: BuiltInSyntax -> Module -> FastString -> Unique -> TyCon -> Name
@@ -252,16 +245,26 @@ mkWiredInIdName mod fs uniq id
 
 -- See Note [Kind-changing of (~) and Coercible]
 -- in libraries/ghc-prim/GHC/Types.hs
+eqTyConName, eqDataConName, eqSCSelIdName :: Name
+eqTyConName   = mkWiredInTyConName   UserSyntax gHC_TYPES (fsLit "~")   eqTyConKey   eqTyCon
+eqDataConName = mkWiredInDataConName UserSyntax gHC_TYPES (fsLit "Eq#") eqDataConKey eqDataCon
+eqSCSelIdName = mkWiredInIdName gHC_TYPES (fsLit "eq_sel") eqSCSelIdKey eqSCSelId
+
+eqTyCon_RDR :: RdrName
+eqTyCon_RDR = nameRdrName eqTyConName
+
+-- See Note [Kind-changing of (~) and Coercible]
+-- in libraries/ghc-prim/GHC/Types.hs
 heqTyConName, heqDataConName, heqSCSelIdName :: Name
 heqTyConName   = mkWiredInTyConName   UserSyntax gHC_TYPES (fsLit "~~")   heqTyConKey      heqTyCon
-heqDataConName = mkWiredInDataConName UserSyntax gHC_TYPES (fsLit "Eq#")  heqDataConKey heqDataCon
-heqSCSelIdName = mkWiredInIdName gHC_TYPES (fsLit "HEq_sc") heqSCSelIdKey heqSCSelId
+heqDataConName = mkWiredInDataConName UserSyntax gHC_TYPES (fsLit "HEq#") heqDataConKey heqDataCon
+heqSCSelIdName = mkWiredInIdName gHC_TYPES (fsLit "heq_sel") heqSCSelIdKey heqSCSelId
 
 -- See Note [Kind-changing of (~) and Coercible] in libraries/ghc-prim/GHC/Types.hs
 coercibleTyConName, coercibleDataConName, coercibleSCSelIdName :: Name
 coercibleTyConName   = mkWiredInTyConName   UserSyntax gHC_TYPES (fsLit "Coercible")  coercibleTyConKey   coercibleTyCon
 coercibleDataConName = mkWiredInDataConName UserSyntax gHC_TYPES (fsLit "MkCoercible") coercibleDataConKey coercibleDataCon
-coercibleSCSelIdName = mkWiredInIdName gHC_TYPES (fsLit "Coercible_sc") coercibleSCSelIdKey coercibleSCSelId
+coercibleSCSelIdName = mkWiredInIdName gHC_TYPES (fsLit "coercible_sel") coercibleSCSelIdKey coercibleSCSelId
 
 charTyConName, charDataConName, intTyConName, intDataConName :: Name
 charTyConName     = mkWiredInTyConName   UserSyntax gHC_TYPES (fsLit "Char") charTyConKey charTyCon
@@ -280,11 +283,11 @@ nilDataConName    = mkWiredInDataConName BuiltInSyntax gHC_TYPES (fsLit "[]") ni
 consDataConName   = mkWiredInDataConName BuiltInSyntax gHC_TYPES (fsLit ":") consDataConKey consDataCon
 
 maybeTyConName, nothingDataConName, justDataConName :: Name
-maybeTyConName     = mkWiredInTyConName   UserSyntax gHC_BASE (fsLit "Maybe")
+maybeTyConName     = mkWiredInTyConName   UserSyntax gHC_MAYBE (fsLit "Maybe")
                                           maybeTyConKey maybeTyCon
-nothingDataConName = mkWiredInDataConName UserSyntax gHC_BASE (fsLit "Nothing")
+nothingDataConName = mkWiredInDataConName UserSyntax gHC_MAYBE (fsLit "Nothing")
                                           nothingDataConKey nothingDataCon
-justDataConName    = mkWiredInDataConName UserSyntax gHC_BASE (fsLit "Just")
+justDataConName    = mkWiredInDataConName UserSyntax gHC_MAYBE (fsLit "Just")
                                           justDataConKey justDataCon
 
 wordTyConName, wordDataConName, word8TyConName, word8DataConName :: Name
@@ -395,11 +398,8 @@ typeSymbolKindConName = mkWiredInTyConName UserSyntax gHC_TYPES (fsLit "Symbol")
 constraintKindTyConName :: Name
 constraintKindTyConName = mkWiredInTyConName UserSyntax gHC_TYPES (fsLit "Constraint") constraintKindTyConKey   constraintKindTyCon
 
-liftedTypeKindTyConName, starKindTyConName, unicodeStarKindTyConName
-  :: Name
+liftedTypeKindTyConName :: Name
 liftedTypeKindTyConName = mkWiredInTyConName UserSyntax gHC_TYPES (fsLit "Type") liftedTypeKindTyConKey liftedTypeKindTyCon
-starKindTyConName = mkWiredInTyConName UserSyntax gHC_TYPES (fsLit "*") starKindTyConKey starKindTyCon
-unicodeStarKindTyConName = mkWiredInTyConName UserSyntax gHC_TYPES (fsLit "★") unicodeStarKindTyConKey unicodeStarKindTyCon
 
 runtimeRepTyConName, vecRepDataConName, tupleRepDataConName, sumRepDataConName :: Name
 runtimeRepTyConName = mkWiredInTyConName UserSyntax gHC_TYPES (fsLit "RuntimeRep") runtimeRepTyConKey runtimeRepTyCon
@@ -445,14 +445,8 @@ vecElemDataConNames = zipWith3Lazy mk_special_dc_name
 mk_special_dc_name :: FastString -> Unique -> DataCon -> Name
 mk_special_dc_name fs u dc = mkWiredInDataConName UserSyntax gHC_TYPES fs u dc
 
-parrTyConName, parrDataConName :: Name
-parrTyConName   = mkWiredInTyConName   BuiltInSyntax
-                    gHC_PARR' (fsLit "[::]") parrTyConKey parrTyCon
-parrDataConName = mkWiredInDataConName UserSyntax
-                    gHC_PARR' (fsLit "PArr") parrDataConKey parrDataCon
-
 boolTyCon_RDR, false_RDR, true_RDR, intTyCon_RDR, charTyCon_RDR,
-    intDataCon_RDR, listTyCon_RDR, consDataCon_RDR, parrTyCon_RDR :: RdrName
+    intDataCon_RDR, listTyCon_RDR, consDataCon_RDR :: RdrName
 boolTyCon_RDR   = nameRdrName boolTyConName
 false_RDR       = nameRdrName falseDataConName
 true_RDR        = nameRdrName trueDataConName
@@ -461,7 +455,6 @@ charTyCon_RDR   = nameRdrName charTyConName
 intDataCon_RDR  = nameRdrName intDataConName
 listTyCon_RDR   = nameRdrName listTyConName
 consDataCon_RDR = nameRdrName consDataConName
-parrTyCon_RDR   = nameRdrName parrTyConName
 
 {-
 ************************************************************************
@@ -471,21 +464,17 @@ parrTyCon_RDR   = nameRdrName parrTyConName
 ************************************************************************
 -}
 
-pcNonEnumTyCon :: Name -> Maybe CType -> [TyVar] -> [DataCon] -> TyCon
--- Not an enumeration
-pcNonEnumTyCon = pcTyCon False
-
 -- This function assumes that the types it creates have all parameters at
 -- Representational role, and that there is no kind polymorphism.
-pcTyCon :: Bool -> Name -> Maybe CType -> [TyVar] -> [DataCon] -> TyCon
-pcTyCon is_enum name cType tyvars cons
+pcTyCon :: Name -> Maybe CType -> [TyVar] -> [DataCon] -> TyCon
+pcTyCon name cType tyvars cons
   = mkAlgTyCon name
                 (mkAnonTyConBinders tyvars)
                 liftedTypeKind
                 (map (const Representational) tyvars)
                 cType
                 []              -- No stupid theta
-                (DataTyCon cons is_enum)
+                (mkDataTyConRhs cons)
                 (VanillaAlgTyCon (mkPrelTyConRepName name))
                 False           -- Not in GADT syntax
 
@@ -521,6 +510,13 @@ pcDataConWithFixity' declared_infix dc_name wrk_key rri
                      tyvars ex_tyvars user_tyvars arg_tys tycon
   = data_con
   where
+    tag_map = mkTyConTagMap tycon
+    -- This constructs the constructor Name to ConTag map once per
+    -- constructor, which is quadratic. It's OK here, because it's
+    -- only called for wired in data types that don't have a lot of
+    -- constructors. It's also likely that GHC will lift tag_map, since
+    -- we call pcDataConWithFixity' with static TyCons in the same module.
+    -- See Note [Constructor tag allocation] and #14657
     data_con = mkDataCon dc_name declared_infix prom_info
                 (map (const no_bang) arg_tys)
                 []      -- No labelled fields
@@ -531,6 +527,7 @@ pcDataConWithFixity' declared_infix dc_name wrk_key rri
                 arg_tys (mkTyConApp tycon (mkTyVarTys tyvars))
                 rri
                 tycon
+                (lookupNameEnv_NF tag_map dc_name)
                 []      -- No stupid theta
                 (mkDataConWorkId wrk_name data_con)
                 NoDataConRep    -- Wired-in types are too simple to need wrappers
@@ -569,16 +566,15 @@ pcSpecialDataCon dc_name arg_tys tycon rri
 typeNatKindCon, typeSymbolKindCon :: TyCon
 -- data Nat
 -- data Symbol
-typeNatKindCon    = pcTyCon False typeNatKindConName    Nothing [] []
-typeSymbolKindCon = pcTyCon False typeSymbolKindConName Nothing [] []
+typeNatKindCon    = pcTyCon typeNatKindConName    Nothing [] []
+typeSymbolKindCon = pcTyCon typeSymbolKindConName Nothing [] []
 
 typeNatKind, typeSymbolKind :: Kind
 typeNatKind    = mkTyConTy typeNatKindCon
 typeSymbolKind = mkTyConTy typeSymbolKindCon
 
 constraintKindTyCon :: TyCon
-constraintKindTyCon = pcTyCon False constraintKindTyConName
-                              Nothing [] []
+constraintKindTyCon = pcTyCon constraintKindTyConName Nothing [] []
 
 liftedTypeKind, constraintKind :: Kind
 liftedTypeKind   = tYPE liftedRepTy
@@ -689,7 +685,8 @@ isBuiltInOcc_maybe occ =
       "[]" -> Just $ choose_ns listTyConName nilDataConName
       ":"    -> Just consDataConName
 
-      "[::]" -> Just parrTyConName
+      -- equality tycon
+      "~"    -> Just eqTyConName
 
       -- boxed tuple data/tycon
       "()"    -> Just $ tup_name Boxed 0
@@ -1015,10 +1012,28 @@ mk_sum arity = (tycon, sum_cons)
 -- necessary because the functional-dependency coverage check looks
 -- through superclasses, and (~#) is handled in that check.
 
-heqTyCon, coercibleTyCon :: TyCon
-heqClass, coercibleClass :: Class
-heqDataCon, coercibleDataCon :: DataCon
-heqSCSelId, coercibleSCSelId :: Id
+eqTyCon,   heqTyCon,   coercibleTyCon   :: TyCon
+eqClass,   heqClass,   coercibleClass   :: Class
+eqDataCon, heqDataCon, coercibleDataCon :: DataCon
+eqSCSelId, heqSCSelId, coercibleSCSelId :: Id
+
+(eqTyCon, eqClass, eqDataCon, eqSCSelId)
+  = (tycon, klass, datacon, sc_sel_id)
+  where
+    tycon     = mkClassTyCon eqTyConName binders roles
+                             rhs klass
+                             (mkPrelTyConRepName eqTyConName)
+    klass     = mk_class tycon sc_pred sc_sel_id
+    datacon   = pcDataCon eqDataConName tvs [sc_pred] tycon
+
+    -- Kind: forall k. k -> k -> Constraint
+    binders   = mkTemplateTyConBinders [liftedTypeKind] (\[k] -> [k,k])
+    roles     = [Nominal, Nominal, Nominal]
+    rhs       = mkDataTyConRhs [datacon]
+
+    tvs@[k,a,b] = binderVars binders
+    sc_pred     = mkTyConApp eqPrimTyCon (mkTyVarTys [k,k,a,b])
+    sc_sel_id   = mkDictSelId eqSCSelIdName klass
 
 (heqTyCon, heqClass, heqDataCon, heqSCSelId)
   = (tycon, klass, datacon, sc_sel_id)
@@ -1032,7 +1047,7 @@ heqSCSelId, coercibleSCSelId :: Id
     -- Kind: forall k1 k2. k1 -> k2 -> Constraint
     binders   = mkTemplateTyConBinders [liftedTypeKind, liftedTypeKind] (\ks -> ks)
     roles     = [Nominal, Nominal, Nominal, Nominal]
-    rhs       = DataTyCon { data_cons = [datacon], is_enum = False }
+    rhs       = mkDataTyConRhs [datacon]
 
     tvs       = binderVars binders
     sc_pred   = mkTyConApp eqPrimTyCon (mkTyVarTys tvs)
@@ -1050,7 +1065,7 @@ heqSCSelId, coercibleSCSelId :: Id
     -- Kind: forall k. k -> k -> Constraint
     binders   = mkTemplateTyConBinders [liftedTypeKind] (\[k] -> [k,k])
     roles     = [Nominal, Representational, Representational]
-    rhs       = DataTyCon { data_cons = [datacon], is_enum = False }
+    rhs       = mkDataTyConRhs [datacon]
 
     tvs@[k,a,b] = binderVars binders
     sc_pred     = mkTyConApp eqReprPrimTyCon (mkTyVarTys [k, k, a, b])
@@ -1060,6 +1075,8 @@ mk_class :: TyCon -> PredType -> Id -> Class
 mk_class tycon sc_pred sc_sel_id
   = mkClass (tyConName tycon) (tyConTyVars tycon) [] [sc_pred] [sc_sel_id]
             [] [] (mkAnd []) tycon
+
+
 
 {- *********************************************************************
 *                                                                      *
@@ -1072,27 +1089,15 @@ mk_class tycon sc_pred sc_sel_id
 runtimeRepTy :: Type
 runtimeRepTy = mkTyConTy runtimeRepTyCon
 
-liftedTypeKindTyCon, starKindTyCon, unicodeStarKindTyCon :: TyCon
-
 -- Type synonyms; see Note [TYPE and RuntimeRep] in TysPrim
 -- type Type = tYPE 'LiftedRep
--- type *    = tYPE 'LiftedRep
--- type *    = tYPE 'LiftedRep  -- Unicode variant
-
+liftedTypeKindTyCon :: TyCon
 liftedTypeKindTyCon   = buildSynTyCon liftedTypeKindTyConName
                                        [] liftedTypeKind []
                                        (tYPE liftedRepTy)
 
-starKindTyCon         = buildSynTyCon starKindTyConName
-                                       [] liftedTypeKind []
-                                       (tYPE liftedRepTy)
-
-unicodeStarKindTyCon  = buildSynTyCon unicodeStarKindTyConName
-                                       [] liftedTypeKind []
-                                       (tYPE liftedRepTy)
-
 runtimeRepTyCon :: TyCon
-runtimeRepTyCon = pcNonEnumTyCon runtimeRepTyConName Nothing []
+runtimeRepTyCon = pcTyCon runtimeRepTyConName Nothing []
                           (vecRepDataCon : tupleRepDataCon :
                            sumRepDataCon : runtimeRepSimpleDataCons)
 
@@ -1165,8 +1170,7 @@ liftedRepDataConTy, unliftedRepDataConTy,
   = map (mkTyConTy . promoteDataCon) runtimeRepSimpleDataCons
 
 vecCountTyCon :: TyCon
-vecCountTyCon = pcTyCon True vecCountTyConName Nothing []
-                        vecCountDataCons
+vecCountTyCon = pcTyCon vecCountTyConName Nothing [] vecCountDataCons
 
 -- See Note [Wiring in RuntimeRep]
 vecCountDataCons :: [DataCon]
@@ -1184,7 +1188,7 @@ vec2DataConTy, vec4DataConTy, vec8DataConTy, vec16DataConTy, vec32DataConTy,
   vec64DataConTy] = map (mkTyConTy . promoteDataCon) vecCountDataCons
 
 vecElemTyCon :: TyCon
-vecElemTyCon = pcTyCon True vecElemTyConName Nothing [] vecElemDataCons
+vecElemTyCon = pcTyCon vecElemTyConName Nothing [] vecElemDataCons
 
 -- See Note [Wiring in RuntimeRep]
 vecElemDataCons :: [DataCon]
@@ -1249,7 +1253,7 @@ charTy :: Type
 charTy = mkTyConTy charTyCon
 
 charTyCon :: TyCon
-charTyCon   = pcNonEnumTyCon charTyConName
+charTyCon   = pcTyCon charTyConName
                    (Just (CType NoSourceText Nothing
                                   (NoSourceText,fsLit "HsChar")))
                    [] [charDataCon]
@@ -1263,7 +1267,7 @@ intTy :: Type
 intTy = mkTyConTy intTyCon
 
 intTyCon :: TyCon
-intTyCon = pcNonEnumTyCon intTyConName
+intTyCon = pcTyCon intTyConName
                (Just (CType NoSourceText Nothing (NoSourceText,fsLit "HsInt")))
                  [] [intDataCon]
 intDataCon :: DataCon
@@ -1273,7 +1277,7 @@ wordTy :: Type
 wordTy = mkTyConTy wordTyCon
 
 wordTyCon :: TyCon
-wordTyCon = pcNonEnumTyCon wordTyConName
+wordTyCon = pcTyCon wordTyConName
             (Just (CType NoSourceText Nothing (NoSourceText, fsLit "HsWord")))
                [] [wordDataCon]
 wordDataCon :: DataCon
@@ -1283,10 +1287,10 @@ word8Ty :: Type
 word8Ty = mkTyConTy word8TyCon
 
 word8TyCon :: TyCon
-word8TyCon = pcNonEnumTyCon word8TyConName
-                      (Just (CType NoSourceText Nothing
-                             (NoSourceText, fsLit "HsWord8"))) []
-                      [word8DataCon]
+word8TyCon = pcTyCon word8TyConName
+                     (Just (CType NoSourceText Nothing
+                            (NoSourceText, fsLit "HsWord8"))) []
+                     [word8DataCon]
 word8DataCon :: DataCon
 word8DataCon = pcDataCon word8DataConName [] [wordPrimTy] word8TyCon
 
@@ -1294,7 +1298,7 @@ floatTy :: Type
 floatTy = mkTyConTy floatTyCon
 
 floatTyCon :: TyCon
-floatTyCon   = pcNonEnumTyCon floatTyConName
+floatTyCon   = pcTyCon floatTyConName
                       (Just (CType NoSourceText Nothing
                              (NoSourceText, fsLit "HsFloat"))) []
                       [floatDataCon]
@@ -1305,7 +1309,7 @@ doubleTy :: Type
 doubleTy = mkTyConTy doubleTyCon
 
 doubleTyCon :: TyCon
-doubleTyCon = pcNonEnumTyCon doubleTyConName
+doubleTyCon = pcTyCon doubleTyConName
                       (Just (CType NoSourceText Nothing
                              (NoSourceText,fsLit "HsDouble"))) []
                       [doubleDataCon]
@@ -1367,7 +1371,7 @@ boolTy :: Type
 boolTy = mkTyConTy boolTyCon
 
 boolTyCon :: TyCon
-boolTyCon = pcTyCon True boolTyConName
+boolTyCon = pcTyCon boolTyConName
                     (Just (CType NoSourceText Nothing
                            (NoSourceText, fsLit "HsBool")))
                     [] [falseDataCon, trueDataCon]
@@ -1381,18 +1385,18 @@ falseDataConId = dataConWorkId falseDataCon
 trueDataConId  = dataConWorkId trueDataCon
 
 orderingTyCon :: TyCon
-orderingTyCon = pcTyCon True orderingTyConName Nothing
-                        [] [ltDataCon, eqDataCon, gtDataCon]
+orderingTyCon = pcTyCon orderingTyConName Nothing
+                        [] [ordLTDataCon, ordEQDataCon, ordGTDataCon]
 
-ltDataCon, eqDataCon, gtDataCon :: DataCon
-ltDataCon = pcDataCon ltDataConName  [] [] orderingTyCon
-eqDataCon = pcDataCon eqDataConName  [] [] orderingTyCon
-gtDataCon = pcDataCon gtDataConName  [] [] orderingTyCon
+ordLTDataCon, ordEQDataCon, ordGTDataCon :: DataCon
+ordLTDataCon = pcDataCon ordLTDataConName  [] [] orderingTyCon
+ordEQDataCon = pcDataCon ordEQDataConName  [] [] orderingTyCon
+ordGTDataCon = pcDataCon ordGTDataConName  [] [] orderingTyCon
 
-ltDataConId, eqDataConId, gtDataConId :: Id
-ltDataConId = dataConWorkId ltDataCon
-eqDataConId = dataConWorkId eqDataCon
-gtDataConId = dataConWorkId gtDataCon
+ordLTDataConId, ordEQDataConId, ordGTDataConId :: Id
+ordLTDataConId = dataConWorkId ordLTDataCon
+ordEQDataConId = dataConWorkId ordEQDataCon
+ordGTDataConId = dataConWorkId ordGTDataCon
 
 {-
 ************************************************************************
@@ -1410,11 +1414,12 @@ mkListTy :: Type -> Type
 mkListTy ty = mkTyConApp listTyCon [ty]
 
 listTyCon :: TyCon
-listTyCon = buildAlgTyCon listTyConName alpha_tyvar [Representational]
-                          Nothing []
-                          (DataTyCon [nilDataCon, consDataCon] False )
-                          False
-                          (VanillaAlgTyCon $ mkPrelTyConRepName listTyConName)
+listTyCon =
+  buildAlgTyCon listTyConName alpha_tyvar [Representational]
+                Nothing []
+                (mkDataTyConRhs [nilDataCon, consDataCon])
+                False
+                (VanillaAlgTyCon $ mkPrelTyConRepName listTyConName)
 
 nilDataCon :: DataCon
 nilDataCon  = pcDataCon nilDataConName alpha_tyvar [] listTyCon
@@ -1431,7 +1436,7 @@ consDataCon = pcDataConWithFixity True {- Declared infix -}
 -- Wired-in type Maybe
 
 maybeTyCon :: TyCon
-maybeTyCon = pcTyCon False maybeTyConName Nothing alpha_tyvar
+maybeTyCon = pcTyCon maybeTyConName Nothing alpha_tyvar
                      [nothingDataCon, justDataCon]
 
 nothingDataCon :: DataCon
@@ -1515,78 +1520,6 @@ mkSumTy :: [Type] -> Type
 mkSumTy tys = mkTyConApp (sumTyCon (length tys))
                          (map getRuntimeRep tys ++ tys)
 
-{- *********************************************************************
-*                                                                      *
-        The parallel-array type,  [::]
-*                                                                      *
-************************************************************************
-
-Special syntax for parallel arrays needs some wired in definitions.
--}
-
--- | Construct a type representing the application of the parallel array constructor
-mkPArrTy    :: Type -> Type
-mkPArrTy ty  = mkTyConApp parrTyCon [ty]
-
--- | Represents the type constructor of parallel arrays
---
---  * This must match the definition in @PrelPArr@
---
--- NB: Although the constructor is given here, it will not be accessible in
---     user code as it is not in the environment of any compiled module except
---     @PrelPArr@.
---
-parrTyCon :: TyCon
-parrTyCon  = pcNonEnumTyCon parrTyConName Nothing alpha_tyvar [parrDataCon]
-
-parrDataCon :: DataCon
-parrDataCon  = pcDataCon
-                 parrDataConName
-                 alpha_tyvar            -- forall'ed type variables
-                 [intTy,                -- 1st argument: Int
-                  mkTyConApp            -- 2nd argument: Array# a
-                    arrayPrimTyCon
-                    alpha_ty]
-                 parrTyCon
-
--- | Check whether a type constructor is the constructor for parallel arrays
-isPArrTyCon    :: TyCon -> Bool
-isPArrTyCon tc  = tyConName tc == parrTyConName
-
--- | Fake array constructors
---
--- * These constructors are never really used to represent array values;
---   however, they are very convenient during desugaring (and, in particular,
---   in the pattern matching compiler) to treat array pattern just like
---   yet another constructor pattern
---
-parrFakeCon                        :: Arity -> DataCon
-parrFakeCon i | i > mAX_TUPLE_SIZE  = mkPArrFakeCon  i  -- build one specially
-parrFakeCon i                       = parrFakeConArr!i
-
--- pre-defined set of constructors
---
-parrFakeConArr :: Array Int DataCon
-parrFakeConArr  = array (0, mAX_TUPLE_SIZE) [(i, mkPArrFakeCon i)
-                                            | i <- [0..mAX_TUPLE_SIZE]]
-
--- build a fake parallel array constructor for the given arity
---
-mkPArrFakeCon       :: Int -> DataCon
-mkPArrFakeCon arity  = data_con
-  where
-        data_con  = pcDataCon name [tyvar] tyvarTys parrTyCon
-        tyvar     = head alphaTyVars
-        tyvarTys  = replicate arity $ mkTyVarTy tyvar
-        nameStr   = mkFastString ("MkPArr" ++ show arity)
-        name      = mkWiredInName gHC_PARR' (mkDataOccFS nameStr) unique
-                                  (AConLike (RealDataCon data_con)) UserSyntax
-        unique      = mkPArrDataConUnique arity
-
--- | Checks whether a data constructor is a fake constructor for parallel arrays
-isPArrFakeCon      :: DataCon -> Bool
-isPArrFakeCon dcon  = dcon == parrFakeCon (dataConSourceArity dcon)
-
 -- Promoted Booleans
 
 promotedFalseDataCon, promotedTrueDataCon :: TyCon
@@ -1604,9 +1537,9 @@ promotedLTDataCon
   , promotedEQDataCon
   , promotedGTDataCon
   :: TyCon
-promotedLTDataCon     = promoteDataCon ltDataCon
-promotedEQDataCon     = promoteDataCon eqDataCon
-promotedGTDataCon     = promoteDataCon gtDataCon
+promotedLTDataCon     = promoteDataCon ordLTDataCon
+promotedEQDataCon     = promoteDataCon ordEQDataCon
+promotedGTDataCon     = promoteDataCon ordGTDataCon
 
 -- Promoted List
 promotedConsDataCon, promotedNilDataCon :: TyCon

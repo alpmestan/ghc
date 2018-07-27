@@ -106,6 +106,7 @@
       RTS_WIN64_ONLY(SymI_HasProto(__imp__environ))      \
       RTS_WIN32_ONLY(SymI_HasProto(_imp___iob))          \
       RTS_WIN64_ONLY(SymI_HasProto(__iob_func))          \
+      RTS_WIN64_ONLY(SymI_HasProto(__mingw_vsnwprintf))  \
       /* see Note [Symbols for MinGW's printf] */        \
       SymI_HasProto(_lock_file)                          \
       SymI_HasProto(_unlock_file)
@@ -557,7 +558,6 @@
       SymI_HasProto(stg_catchzh)                                        \
       SymI_HasProto(stg_catchRetryzh)                                   \
       SymI_HasProto(stg_catchSTMzh)                                     \
-      SymI_HasProto(stg_checkzh)                                        \
       SymI_HasProto(stg_clearCCSzh)                                     \
       SymI_HasProto(stg_compactAddWithSharingzh)                        \
       SymI_HasProto(stg_compactAddzh)                                   \
@@ -641,7 +641,6 @@
       SymI_HasProto(lookupSymbol)                                       \
       SymI_HasProto(stg_makeStablePtrzh)                                \
       SymI_HasProto(stg_mkApUpd0zh)                                     \
-      SymI_HasProto(stg_myThreadIdzh)                                   \
       SymI_HasProto(stg_labelThreadzh)                                  \
       SymI_HasProto(stg_newArrayzh)                                     \
       SymI_HasProto(stg_copyArrayzh)                                    \
@@ -670,7 +669,8 @@
       SymI_HasProto(stg_newMutVarzh)                                    \
       SymI_HasProto(stg_newTVarzh)                                      \
       SymI_HasProto(stg_noDuplicatezh)                                  \
-      SymI_HasProto(stg_atomicModifyMutVarzh)                           \
+      SymI_HasProto(stg_atomicModifyMutVar2zh)                          \
+      SymI_HasProto(stg_atomicModifyMutVarzuzh)                         \
       SymI_HasProto(stg_casMutVarzh)                                    \
       SymI_HasProto(stg_newPinnedByteArrayzh)                           \
       SymI_HasProto(stg_newAlignedPinnedByteArrayzh)                    \
@@ -744,8 +744,6 @@
       SymI_HasProto(rts_isProfiled)                                     \
       SymI_HasProto(rts_isDynamic)                                      \
       SymI_HasProto(rts_setInCallCapability)                            \
-      SymI_HasProto(rts_getThreadAllocationCounter)                     \
-      SymI_HasProto(rts_setThreadAllocationCounter)                     \
       SymI_HasProto(rts_enableThreadAllocationLimit)                    \
       SymI_HasProto(rts_disableThreadAllocationLimit)                   \
       SymI_HasProto(rts_setMainThread)                                  \
@@ -770,14 +768,30 @@
       SymI_HasProto(stg_IND_STATIC_info)                                \
       SymI_HasProto(stg_ARR_WORDS_info)                                 \
       SymI_HasProto(stg_MUT_ARR_PTRS_DIRTY_info)                        \
-      SymI_HasProto(stg_MUT_ARR_PTRS_FROZEN_info)                       \
-      SymI_HasProto(stg_MUT_ARR_PTRS_FROZEN0_info)                      \
+      SymI_HasProto(stg_MUT_ARR_PTRS_FROZEN_CLEAN_info)                 \
+      SymI_HasProto(stg_MUT_ARR_PTRS_FROZEN_DIRTY_info)                 \
       SymI_HasProto(stg_SMALL_MUT_ARR_PTRS_DIRTY_info)                  \
-      SymI_HasProto(stg_SMALL_MUT_ARR_PTRS_FROZEN_info)                 \
-      SymI_HasProto(stg_SMALL_MUT_ARR_PTRS_FROZEN0_info)                \
+      SymI_HasProto(stg_SMALL_MUT_ARR_PTRS_FROZEN_CLEAN_info)           \
+      SymI_HasProto(stg_SMALL_MUT_ARR_PTRS_FROZEN_DIRTY_info)           \
       SymI_HasProto(stg_MUT_VAR_CLEAN_info)                             \
       SymI_HasProto(stg_MUT_VAR_DIRTY_info)                             \
       SymI_HasProto(stg_WEAK_info)                                      \
+      SymI_HasProto(stg_SRT_1_info)                                     \
+      SymI_HasProto(stg_SRT_2_info)                                     \
+      SymI_HasProto(stg_SRT_3_info)                                     \
+      SymI_HasProto(stg_SRT_4_info)                                     \
+      SymI_HasProto(stg_SRT_5_info)                                     \
+      SymI_HasProto(stg_SRT_6_info)                                     \
+      SymI_HasProto(stg_SRT_7_info)                                     \
+      SymI_HasProto(stg_SRT_8_info)                                     \
+      SymI_HasProto(stg_SRT_9_info)                                     \
+      SymI_HasProto(stg_SRT_10_info)                                    \
+      SymI_HasProto(stg_SRT_11_info)                                    \
+      SymI_HasProto(stg_SRT_12_info)                                    \
+      SymI_HasProto(stg_SRT_13_info)                                    \
+      SymI_HasProto(stg_SRT_14_info)                                    \
+      SymI_HasProto(stg_SRT_15_info)                                    \
+      SymI_HasProto(stg_SRT_16_info)                                    \
       SymI_HasProto(stg_ap_v_info)                                      \
       SymI_HasProto(stg_ap_f_info)                                      \
       SymI_HasProto(stg_ap_d_info)                                      \
@@ -896,6 +910,8 @@
       SymI_HasProto(stg_traceCcszh)                                     \
       SymI_HasProto(stg_traceEventzh)                                   \
       SymI_HasProto(stg_traceMarkerzh)                                  \
+      SymI_HasProto(stg_getThreadAllocationCounterzh)                   \
+      SymI_HasProto(stg_setThreadAllocationCounterzh)                   \
       SymI_HasProto(getMonotonicNSec)                                   \
       SymI_HasProto(lockFile)                                           \
       SymI_HasProto(unlockFile)                                         \

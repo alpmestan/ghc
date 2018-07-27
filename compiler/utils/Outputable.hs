@@ -22,13 +22,13 @@ module Outputable (
         empty, isEmpty, nest,
         char,
         text, ftext, ptext, ztext,
-        int, intWithCommas, integer, float, double, rational, doublePrec,
+        int, intWithCommas, integer, word, float, double, rational, doublePrec,
         parens, cparen, brackets, braces, quotes, quote,
-        doubleQuotes, angleBrackets, paBrackets,
+        doubleQuotes, angleBrackets,
         semi, comma, colon, dcolon, space, equals, dot, vbar,
         arrow, larrow, darrow, arrowt, larrowt, arrowtt, larrowtt,
         lparen, rparen, lbrack, rbrack, lbrace, rbrace, underscore,
-        blankLine, forAllLit, kindStar, bullet,
+        blankLine, forAllLit, kindType, bullet,
         (<>), (<+>), hcat, hsep,
         ($$), ($+$), vcat,
         sep, cat,
@@ -69,6 +69,7 @@ module Outputable (
         alwaysQualifyPackages, neverQualifyPackages,
         QualifyName(..), queryQual,
         sdocWithDynFlags, sdocWithPlatform,
+        updSDocDynFlags,
         getPprStyle, withPprStyle, withPprStyleDoc, setStyleColoured,
         pprDeeper, pprDeeperList, pprSetDepth,
         codeStyle, userStyle, debugStyle, dumpStyle, asmStyle,
@@ -81,7 +82,7 @@ module Outputable (
         -- * Error handling and debugging utilities
         pprPanic, pprSorry, assertPprPanic, pprPgmError,
         pprTrace, pprTraceDebug, pprTraceIt, warnPprTrace, pprSTrace,
-        pprTraceException,
+        pprTraceException, pprTraceM,
         trace, pgmError, panic, sorry, assertPanic,
         pprDebugAndThen, callStackDoc,
     ) where
@@ -90,8 +91,9 @@ import GhcPrelude
 
 import {-# SOURCE #-}   DynFlags( DynFlags, hasPprDebug, hasNoDebugOutput,
                                   targetPlatform, pprUserLength, pprCols,
-                                  useUnicode, useUnicodeSyntax,
-                                  shouldUseColor, unsafeGlobalDynFlags )
+                                  useUnicode, useUnicodeSyntax, useStarIsType,
+                                  shouldUseColor, unsafeGlobalDynFlags,
+                                  shouldUseHexWordLiterals )
 import {-# SOURCE #-}   Module( UnitId, Module, ModuleName, moduleName )
 import {-# SOURCE #-}   OccName( OccName )
 
@@ -386,6 +388,10 @@ sdocWithDynFlags f = SDoc $ \ctx -> runSDoc (f (sdocDynFlags ctx)) ctx
 sdocWithPlatform :: (Platform -> SDoc) -> SDoc
 sdocWithPlatform f = sdocWithDynFlags (f . targetPlatform)
 
+updSDocDynFlags :: (DynFlags -> DynFlags) -> SDoc -> SDoc
+updSDocDynFlags upd doc
+  = SDoc $ \ctx -> runSDoc doc (ctx { sdocDynFlags = upd (sdocDynFlags ctx) })
+
 qualName :: PprStyle -> QueryQualifyName
 qualName (PprUser q _ _) mod occ = queryQualifyName q mod occ
 qualName (PprDump q)     mod occ = queryQualifyName q mod occ
@@ -555,6 +561,7 @@ ptext    :: LitString  -> SDoc
 ztext    :: FastZString -> SDoc
 int      :: Int        -> SDoc
 integer  :: Integer    -> SDoc
+word     :: Integer    -> SDoc
 float    :: Float      -> SDoc
 double   :: Double     -> SDoc
 rational :: Rational   -> SDoc
@@ -573,6 +580,11 @@ integer n   = docToSDoc $ Pretty.integer n
 float n     = docToSDoc $ Pretty.float n
 double n    = docToSDoc $ Pretty.double n
 rational n  = docToSDoc $ Pretty.rational n
+word n      = sdocWithDynFlags $ \dflags ->
+    -- See Note [Print Hexadecimal Literals] in Pretty.hs
+    if shouldUseHexWordLiterals dflags
+        then docToSDoc $ Pretty.hex n
+        else docToSDoc $ Pretty.integer n
 
 -- | @doublePrec p n@ shows a floating point number @n@ with @p@
 -- digits of precision after the decimal point.
@@ -580,7 +592,7 @@ doublePrec :: Int -> Double -> SDoc
 doublePrec p n = text (showFFloat (Just p) n "")
 
 parens, braces, brackets, quotes, quote,
-        paBrackets, doubleQuotes, angleBrackets :: SDoc -> SDoc
+        doubleQuotes, angleBrackets :: SDoc -> SDoc
 
 parens d        = SDoc $ Pretty.parens . runSDoc d
 braces d        = SDoc $ Pretty.braces . runSDoc d
@@ -588,7 +600,6 @@ brackets d      = SDoc $ Pretty.brackets . runSDoc d
 quote d         = SDoc $ Pretty.quote . runSDoc d
 doubleQuotes d  = SDoc $ Pretty.doubleQuotes . runSDoc d
 angleBrackets d = char '<' <> d <> char '>'
-paBrackets d    = text "[:" <> d <> text ":]"
 
 cparen :: Bool -> SDoc -> SDoc
 cparen b d = SDoc $ Pretty.maybeParens b . runSDoc d
@@ -639,8 +650,11 @@ rbrace     = docToSDoc $ Pretty.rbrace
 forAllLit :: SDoc
 forAllLit = unicodeSyntax (char '∀') (text "forall")
 
-kindStar :: SDoc
-kindStar = unicodeSyntax (char '★') (char '*')
+kindType :: SDoc
+kindType = sdocWithDynFlags $ \dflags ->
+    if useStarIsType dflags
+    then unicodeSyntax (char '★') (char '*')
+    else text "Type"
 
 bullet :: SDoc
 bullet = unicode (char '•') (char '*')
@@ -969,9 +983,9 @@ pprPrimChar :: Char -> SDoc
 pprPrimInt, pprPrimWord, pprPrimInt64, pprPrimWord64 :: Integer -> SDoc
 pprPrimChar c   = pprHsChar c <> primCharSuffix
 pprPrimInt i    = integer i   <> primIntSuffix
-pprPrimWord w   = integer w   <> primWordSuffix
+pprPrimWord w   = word    w   <> primWordSuffix
 pprPrimInt64 i  = integer i   <> primInt64Suffix
-pprPrimWord64 w = integer w   <> primWord64Suffix
+pprPrimWord64 w = word    w   <> primWord64Suffix
 
 ---------------------
 -- Put a name in parens if it's an operator
@@ -1170,6 +1184,9 @@ pprTrace str doc x
    | otherwise                             =
       pprDebugAndThen unsafeGlobalDynFlags trace (text str) doc x
 
+pprTraceM :: Applicative f => String -> SDoc -> f ()
+pprTraceM str doc = pprTrace str doc (pure ())
+
 -- | @pprTraceIt desc x@ is equivalent to @pprTrace desc (ppr x) x@
 pprTraceIt :: Outputable a => String -> a -> a
 pprTraceIt desc x = pprTrace desc (ppr x) x
@@ -1203,9 +1220,7 @@ warnPprTrace True   file  line  msg x
 -- line number. Should typically be accessed with the ASSERT family of macros
 assertPprPanic :: HasCallStack => String -> Int -> SDoc -> a
 assertPprPanic _file _line msg
-  = pprPanic "ASSERT failed!" doc
-  where
-    doc = sep [ msg, callStackDoc ]
+  = pprPanic "ASSERT failed!" msg
 
 pprDebugAndThen :: DynFlags -> (String -> a) -> SDoc -> SDoc -> a
 pprDebugAndThen dflags cont heading pretty_msg

@@ -35,9 +35,9 @@ T12593.hs:12:47: error:
                            -> Constraint’
                      with ‘*’
       When matching kinds
+        k2 :: *
         k :: (((k0 -> k1 -> *) -> Constraint) -> (k2 -> k3 -> *) -> *)
              -> Constraint
-        k2 :: *
     • In the first argument of ‘p’, namely ‘c’
       In the type signature:
         run :: k2 q =>
@@ -49,8 +49,8 @@ T12593.hs:12:49: error:
                            -> (k2 -> k3 -> *) -> *’
                      with ‘*’
       When matching kinds
-        k4 :: ((k0 -> k1 -> *) -> Constraint) -> (k2 -> k3 -> *) -> *
         k3 :: *
+        k4 :: ((k0 -> k1 -> *) -> Constraint) -> (k2 -> k3 -> *) -> *
     • In the second argument of ‘p’, namely ‘d’
       In the type signature:
         run :: k2 q =>
@@ -63,9 +63,9 @@ T12593.hs:12:56: error:
                            -> Constraint’
                      with ‘*’
       When matching kinds
+        k0 :: *
         k :: (((k0 -> k1 -> *) -> Constraint) -> (k2 -> k3 -> *) -> *)
              -> Constraint
-        k0 :: *
     • In the first argument of ‘q’, namely ‘c’
       In the type signature:
         run :: k2 q =>
@@ -77,8 +77,8 @@ T12593.hs:12:58: error:
                            -> (k2 -> k3 -> *) -> *’
                      with ‘*’
       When matching kinds
-        k4 :: ((k0 -> k1 -> *) -> Constraint) -> (k2 -> k3 -> *) -> *
         k1 :: *
+        k4 :: ((k0 -> k1 -> *) -> Constraint) -> (k2 -> k3 -> *) -> *
     • In the second argument of ‘q’, namely ‘d’
       In the type signature:
         run :: k2 q =>

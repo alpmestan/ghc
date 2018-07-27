@@ -30,7 +30,7 @@ module TysPrim(
         tYPE, primRepToRuntimeRep,
 
         funTyCon, funTyConName,
-        primTyCons,
+        unexposedPrimTyCons, exposedPrimTyCons, primTyCons,
 
         charPrimTyCon,          charPrimTy, charPrimTyConName,
         intPrimTyCon,           intPrimTy, intPrimTyConName,
@@ -118,7 +118,22 @@ import Data.Char
 -}
 
 primTyCons :: [TyCon]
-primTyCons
+primTyCons = unexposedPrimTyCons ++ exposedPrimTyCons
+
+-- | Primitive 'TyCon's that are defined in "GHC.Prim" but not exposed.
+-- It's important to keep these separate as we don't want users to be able to
+-- write them (see Trac #15209) or see them in GHCi's @:browse@ output
+-- (see Trac #12023).
+unexposedPrimTyCons :: [TyCon]
+unexposedPrimTyCons
+  = [ eqPrimTyCon
+    , eqReprPrimTyCon
+    , eqPhantPrimTyCon
+    ]
+
+-- | Primitive 'TyCon's that are defined in, and exported from, "GHC.Prim".
+exposedPrimTyCons :: [TyCon]
+exposedPrimTyCons
   = [ addrPrimTyCon
     , arrayPrimTyCon
     , byteArrayPrimTyCon
@@ -150,9 +165,6 @@ primTyCons
     , wordPrimTyCon
     , word32PrimTyCon
     , word64PrimTyCon
-    , eqPrimTyCon
-    , eqReprPrimTyCon
-    , eqPhantPrimTyCon
 
     , tYPETyCon
 
@@ -328,7 +340,7 @@ openBetaTy  = mkTyVarTy openBetaTyVar
 -}
 
 funTyConName :: Name
-funTyConName = mkPrimTyConName (fsLit "(->)") funTyConKey funTyCon
+funTyConName = mkPrimTyConName (fsLit "->") funTyConKey funTyCon
 
 -- | The @(->)@ type constructor.
 --
@@ -587,7 +599,7 @@ GHC sports a veritable menagerie of equality types:
 -----------------------------------------------------------------------------------------
 ~#         T        U      hetero   nominal   eqPrimTyCon      GHC.Prim
 ~~         C        L      hetero   nominal   hEqTyCon         GHC.Types
-~          C        L      homo     nominal   eqTyCon          Data.Type.Equality
+~          C        L      homo     nominal   eqTyCon          GHC.Types
 :~:        T        L      homo     nominal   (not built-in)   Data.Type.Equality
 :~~:       T        L      hetero   nominal   (not built-in)   Data.Type.Equality
 
@@ -630,6 +642,7 @@ This is (almost) an ordinary class, defined as if by
   class a ~# b => a ~~ b
   instance a ~# b => a ~~ b
 Here's what's unusual about it:
+
  * We can't actually declare it that way because we don't have syntax for ~#.
    And ~# isn't a constraint, so even if we could write it, it wouldn't kind
    check.
@@ -659,21 +672,23 @@ Within GHC, ~~ is called heqTyCon, and it is defined in TysWiredIn.
     --------------------------
     (~) :: forall k. k -> k -> Constraint
     --------------------------
-This is defined in Data.Type.Equality:
-  class a ~~ b => (a :: k) ~ (b :: k)
-  instance a ~~ b => a ~ b
-This is even more so an ordinary class than (~~), with the following exceptions:
- * Users cannot write instances of it.
+This is /exactly/ like (~~), except with a homogeneous kind.
+It is an almost-ordinary class defined as if by
+  class a ~# b => (a :: k) ~ (b :: k)
+  instance a ~# b => a ~ b
 
- * It is "naturally coherent". (See (~~).)
+ * All the bullets for (~~) apply
 
- * (~) is magical syntax, as ~ is a reserved symbol.
+ * In addition (~) is magical syntax, as ~ is a reserved symbol.
    It cannot be exported or imported.
 
- * It always terminates.
+Within GHC, ~ is called eqTyCon, and it is defined in TysWiredIn.
 
-Within GHC, ~ is called eqTyCon, and it is defined in PrelNames. Note that
-it is *not* wired in.
+Historical note: prior to July 18 (~) was defined as a
+  more-ordinary class with (~~) as a superclass.  But that made it
+  special in different ways; and the extra superclass selections to
+  get from (~) to (~#) via (~~) were tiresome.  Now it's defined
+  uniformly with (~~) and Coercible; much nicer.)
 
 
     --------------------------

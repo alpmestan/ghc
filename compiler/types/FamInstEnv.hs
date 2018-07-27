@@ -2,7 +2,7 @@
 --
 -- FamInstEnv: Type checked family instance declarations
 
-{-# LANGUAGE CPP, GADTs, ScopedTypeVariables #-}
+{-# LANGUAGE CPP, GADTs, ScopedTypeVariables, BangPatterns #-}
 
 module FamInstEnv (
         FamInst(..), FamFlavor(..), famInstAxiom, famInstTyCon, famInstRHS,
@@ -53,7 +53,7 @@ import PrelNames ( eqPrimTyConKey )
 import UniqDFM
 import Outputable
 import Maybes
-import TrieMap
+import CoreMap
 import Unique
 import Util
 import Var
@@ -63,6 +63,7 @@ import FastString
 import MonadUtils
 import Control.Monad
 import Data.List( mapAccumL )
+import Data.Array( Array, assocs )
 
 {-
 ************************************************************************
@@ -511,7 +512,7 @@ go back to all previous equations and check that, under the
 substitution induced by the match, other branches are surely apart. (See
 Note [Apartness].) This is similar to what happens with class
 instance selection, when we need to guarantee that there is only a match and
-no unifiers. The exact algorithm is different here because the the
+no unifiers. The exact algorithm is different here because the
 potentially-overlapping group is closed.
 
 As another example, consider this:
@@ -974,7 +975,6 @@ lookup_fam_inst_env' match_fun ie fam match_tys
         -- No match => try next
       | otherwise
       = find rest
-
       where
         (rough_tcs, match_tys1, match_tys2) = split_tys tpl_tys
 
@@ -1121,21 +1121,25 @@ chooseBranch axiom tys
              (target_tys, extra_tys) = splitAt num_pats tys
              branches = coAxiomBranches axiom
        ; (ind, inst_tys, inst_cos)
-           <- findBranch (fromBranches branches) target_tys
+           <- findBranch (unMkBranches branches) target_tys
        ; return ( ind, inst_tys `chkAppend` extra_tys, inst_cos ) }
 
 -- The axiom must *not* be oversaturated
-findBranch :: [CoAxBranch]             -- branches to check
-           -> [Type]                   -- target types
+findBranch :: Array BranchIndex CoAxBranch
+           -> [Type]
            -> Maybe (BranchIndex, [Type], [Coercion])
     -- coercions relate requested types to returned axiom LHS at role N
 findBranch branches target_tys
-  = go 0 branches
+  = foldr go Nothing (assocs branches)
   where
-    go ind (branch@(CoAxBranch { cab_tvs = tpl_tvs, cab_cvs = tpl_cvs
-                               , cab_lhs = tpl_lhs
-                               , cab_incomps = incomps }) : rest)
-      = let in_scope = mkInScopeSet (unionVarSets $
+    go :: (BranchIndex, CoAxBranch)
+       -> Maybe (BranchIndex, [Type], [Coercion])
+       -> Maybe (BranchIndex, [Type], [Coercion])
+    go (index, branch) other
+      = let (CoAxBranch { cab_tvs = tpl_tvs, cab_cvs = tpl_cvs
+                        , cab_lhs = tpl_lhs
+                        , cab_incomps = incomps }) = branch
+            in_scope = mkInScopeSet (unionVarSets $
                             map (tyCoVarsOfTypes . coAxBranchLHS) incomps)
             -- See Note [Flattening] below
             flattened_target = flattenTys in_scope target_tys
@@ -1145,13 +1149,10 @@ findBranch branches target_tys
           -> -- matching worked & we're apart from all incompatible branches.
              -- success
              ASSERT( all (isJust . lookupCoVar subst) tpl_cvs )
-             Just (ind, substTyVars subst tpl_tvs, substCoVars subst tpl_cvs)
+             Just (index, substTyVars subst tpl_tvs, substCoVars subst tpl_cvs)
 
         -- failure. keep looking
-        _ -> go (ind+1) rest
-
-    -- fail if no branches left
-    go _ [] = Nothing
+        _ -> other
 
 -- | Do an apartness check, as described in the "Closed Type Families" paper
 -- (POPL '14). This should be used when determining if an equation
@@ -1204,7 +1205,7 @@ Type) pairs.
 
 We also benefit because we can piggyback on the liftCoSubstVarBndr function to
 deal with binders. However, I had to modify that function to work with this
-application. Thus, we now have liftCoSubstVarBndrCallback, which takes
+application. Thus, we now have liftCoSubstVarBndrUsing, which takes
 a function used to process the kind of the binder. We don't wish
 to lift the kind, but instead normalise it. So, we pass in a callback function
 that processes the kind of the binder.
@@ -1340,15 +1341,15 @@ normaliseType env role ty
   = initNormM env role (tyCoVarsOfType ty) $ normalise_type ty
 
 normalise_type :: Type                     -- old type
-               -> NormM (Coercion, Type)   -- (coercion,new type), where
-                                         -- co :: old-type ~ new_type
+               -> NormM (Coercion, Type)   -- (coercion, new type), where
+                                           -- co :: old-type ~ new_type
 -- Normalise the input type, by eliminating *all* type-function redexes
 -- but *not* newtypes (which are visible to the programmer)
 -- Returns with Refl if nothing happens
 -- Does nothing to newtypes
 -- The returned coercion *must* be *homogeneous*
 -- See Note [Normalising types]
--- Try to not to disturb type synonyms if possible
+-- Try not to disturb type synonyms if possible
 
 normalise_type ty
   = go ty
@@ -1375,7 +1376,8 @@ normalise_type ty
       = do { (nco, nty) <- go ty
            ; lc <- getLC
            ; let co' = substRightCo lc co
-           ; return (castCoercionKind nco co co', mkCastTy nty co') }
+           ; return (castCoercionKind nco Nominal ty nty co co'
+                    , mkCastTy nty co') }
     go (CoercionTy co)
       = do { lc <- getLC
            ; r <- getRole
@@ -1400,7 +1402,7 @@ normalise_tyvar_bndr tv
   = do { lc1 <- getLC
        ; env <- getEnv
        ; let callback lc ki = runNormM (normalise_type ki) env lc Nominal
-       ; return $ liftCoSubstVarBndrCallback callback lc1 tv }
+       ; return $ liftCoSubstVarBndrUsing callback lc1 tv }
 
 -- | a monad for the normalisation functions, reading 'FamInstEnvs',
 -- a 'LiftingContext', and a 'Role'.
@@ -1622,21 +1624,25 @@ allTyVarsInTy = go
     go (CastTy ty co)    = go ty `unionVarSet` go_co co
     go (CoercionTy co)   = go_co co
 
-    go_co (Refl _ ty)           = go ty
+    go_mco MRefl    = emptyVarSet
+    go_mco (MCo co) = go_co co
+
+    go_co (Refl ty)             = go ty
+    go_co (GRefl _ ty mco)      = go ty `unionVarSet` go_mco mco
     go_co (TyConAppCo _ _ args) = go_cos args
     go_co (AppCo co arg)        = go_co co `unionVarSet` go_co arg
     go_co (ForAllCo tv h co)
       = unionVarSets [unitVarSet tv, go_co co, go_co h]
     go_co (FunCo _ c1 c2)       = go_co c1 `unionVarSet` go_co c2
     go_co (CoVarCo cv)          = unitVarSet cv
+    go_co (HoleCo h)            = unitVarSet (coHoleCoVar h)
     go_co (AxiomInstCo _ _ cos) = go_cos cos
     go_co (UnivCo p _ t1 t2)    = go_prov p `unionVarSet` go t1 `unionVarSet` go t2
     go_co (SymCo co)            = go_co co
     go_co (TransCo c1 c2)       = go_co c1 `unionVarSet` go_co c2
-    go_co (NthCo _ co)          = go_co co
+    go_co (NthCo _ _ co)        = go_co co
     go_co (LRCo _ co)           = go_co co
     go_co (InstCo co arg)       = go_co co `unionVarSet` go_co arg
-    go_co (CoherenceCo c1 c2)   = go_co c1 `unionVarSet` go_co c2
     go_co (KindCo co)           = go_co co
     go_co (SubCo co)            = go_co co
     go_co (AxiomRuleCo _ cs)    = go_cos cs
@@ -1647,7 +1653,6 @@ allTyVarsInTy = go
     go_prov (PhantomProv co)    = go_co co
     go_prov (ProofIrrelProv co) = go_co co
     go_prov (PluginProv _)      = emptyVarSet
-    go_prov (HoleProv _)        = emptyVarSet
 
 mkFlattenFreshTyName :: Uniquable a => a -> Name
 mkFlattenFreshTyName unq

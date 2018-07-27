@@ -88,6 +88,7 @@ import Demand           ( StrictSig, Demand, isStrictDmd, splitStrictSig, increa
 import Name             ( getOccName, mkSystemVarName )
 import OccName          ( occNameString )
 import Type             ( Type, mkLamTypes, splitTyConApp_maybe, tyCoVarsOfType )
+import TyCoRep          ( closeOverKindsDSet )
 import BasicTypes       ( Arity, RecFlag(..), isRec )
 import DataCon          ( dataConOrigResTy )
 import TysWiredIn
@@ -1558,17 +1559,14 @@ abstractVars :: Level -> LevelEnv -> DVarSet -> [OutVar]
         -- Uniques are not deterministic.
 abstractVars dest_lvl (LE { le_subst = subst, le_lvl_env = lvl_env }) in_fvs
   =  -- NB: sortQuantVars might not put duplicates next to each other
-    map zap $ sortQuantVars $ uniq
-    [out_var | out_fv  <- dVarSetElems (substDVarSet subst in_fvs)
-             , out_var <- dVarSetElems (close out_fv)
-             , abstract_me out_var ]
+    map zap $ sortQuantVars $
+    filter abstract_me      $
+    dVarSetElems            $
+    closeOverKindsDSet      $
+    substDVarSet subst in_fvs
         -- NB: it's important to call abstract_me only on the OutIds the
         -- come from substDVarSet (not on fv, which is an InId)
   where
-    uniq :: [Var] -> [Var]
-        -- Remove duplicates, preserving order
-    uniq = dVarSetElems . mkDVarSet
-
     abstract_me v = case lookupVarEnv lvl_env v of
                         Just lvl -> dest_lvl `ltLvl` lvl
                         Nothing  -> False
@@ -1580,12 +1578,6 @@ abstractVars dest_lvl (LE { le_subst = subst, le_lvl_env = lvl_env }) in_fvs
                            text "absVarsOf: discarding info on" <+> ppr v )
                      setIdInfo v vanillaIdInfo
           | otherwise = v
-
-    close :: Var -> DVarSet  -- Close over variables free in the type
-                             -- Result includes the input variable itself
-    close v = foldDVarSet (unionDVarSet . close)
-                          (unitDVarSet v)
-                          (fvDVarSet $ varTypeTyCoFVs v)
 
 type LvlM result = UniqSM result
 
@@ -1648,7 +1640,7 @@ newLvlVar lvld_rhs join_arity_maybe is_mk_static
       = mkExportedVanillaId (mkSystemVarName uniq (mkFastString "static_ptr"))
                             rhs_ty
       | otherwise
-      = mkLocalIdOrCoVar (mkSystemVarName uniq (mkFastString "lvl")) rhs_ty
+      = mkSysLocalOrCoVar (mkFastString "lvl") uniq rhs_ty
 
 cloneCaseBndrs :: LevelEnv -> Level -> [Var] -> LvlM (LevelEnv, [Var])
 cloneCaseBndrs env@(LE { le_subst = subst, le_lvl_env = lvl_env, le_env = id_env })

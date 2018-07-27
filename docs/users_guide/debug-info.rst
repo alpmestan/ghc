@@ -9,7 +9,7 @@ useable by most UNIX debugging tools.
               -g⟨n⟩
     :shortdesc: Produce DWARF debug information in compiled object files.
         ⟨n⟩ can be 0, 1, or 2, with higher numbers producing richer
-        output. If ⟨n⟩ is omitted level 2 is assumed.
+        output. If ⟨n⟩ is omitted, level 2 is assumed.
     :type: dynamic
     :category: debugging
 
@@ -17,8 +17,9 @@ useable by most UNIX debugging tools.
 
     Emit debug information in object code. Currently only DWARF debug
     information is supported on x86-64 and i386. Currently debug levels 0
-    through 3 are accepted, with 0 disabling debug information production.
-    Levels 1 through 3 are functionally equivalent.
+    through 3 are accepted, with 0 disabling debug information production
+    and higher numbers producing richer output. If ⟨n⟩ is omitted, level 2
+    is assumed.
 
 
 Tutorial
@@ -268,10 +269,10 @@ GHC may produce the following standard DIEs in the ``.debug_info`` section,
   Represents a compilation unit (e.g. a Haskell module).
 
 ``DW_TAG_subprogram``
-  Represents a C-- top-level basic block.
+  Represents a C-\\- top-level basic block.
 
 ``DW_TAG_lexical_block``
-  Represents a C-- basic block. Note that this is a slight departure from the
+  Represents a C-\\- basic block. Note that this is a slight departure from the
   intended meaning of this DIE type as it does not necessarily reflect
   lexical scope in the source program.
 

@@ -34,8 +34,7 @@ module RdrName (
         -- ** Destruction
         rdrNameOcc, rdrNameSpace, demoteRdrName,
         isRdrDataCon, isRdrTyVar, isRdrTc, isQual, isQual_maybe, isUnqual,
-        isOrig, isOrig_maybe, isExact, isExact_maybe, isSrcRdrName, isStar,
-        isUniStar,
+        isOrig, isOrig_maybe, isExact, isExact_maybe, isSrcRdrName,
 
         -- * Local mapping of 'RdrName' to 'Name.Name'
         LocalRdrEnv, emptyLocalRdrEnv, extendLocalRdrEnv, extendLocalRdrEnvList,
@@ -48,6 +47,7 @@ module RdrName (
         lookupGlobalRdrEnv, extendGlobalRdrEnv, greOccName, shadowNames,
         pprGlobalRdrEnv, globalRdrEnvElts,
         lookupGRE_RdrName, lookupGRE_Name, lookupGRE_FieldLabel,
+        lookupGRE_Name_OccName,
         getGRE_NameQualifier_maybes,
         transformGREs, pickGREs, pickGREsModExp,
 
@@ -62,7 +62,10 @@ module RdrName (
         pprNameProvenance,
         Parent(..),
         ImportSpec(..), ImpDeclSpec(..), ImpItemSpec(..),
-        importSpecLoc, importSpecModule, isExplicitItem, bestImport
+        importSpecLoc, importSpecModule, isExplicitItem, bestImport,
+
+        -- * Utils for StarIsType
+        starInfo
   ) where
 
 #include "HsVersions.h"
@@ -111,7 +114,7 @@ import Data.List( sortBy, foldl', nub )
 --           'ApiAnnotation.AnnOpen'  @'('@ or @'['@ or @'[:'@,
 --           'ApiAnnotation.AnnClose' @')'@ or @']'@ or @':]'@,,
 --           'ApiAnnotation.AnnBackquote' @'`'@,
---           'ApiAnnotation.AnnVal','ApiAnnotation.AnnTildehsh',
+--           'ApiAnnotation.AnnVal'
 --           'ApiAnnotation.AnnTilde',
 
 -- For details on above see note [Api annotations] in ApiAnnotation
@@ -260,10 +263,6 @@ isExact _         = False
 isExact_maybe :: RdrName -> Maybe Name
 isExact_maybe (Exact n) = Just n
 isExact_maybe _         = Nothing
-
-isStar, isUniStar :: RdrName -> Bool
-isStar     = (fsLit "*" ==) . occNameFS . rdrNameOcc
-isUniStar = (fsLit "★" ==) . occNameFS . rdrNameOcc
 
 {-
 ************************************************************************
@@ -473,7 +472,7 @@ data Parent = NoParent
             | ParentIs  { par_is :: Name }
             | FldParent { par_is :: Name, par_lbl :: Maybe FieldLabelString }
               -- ^ See Note [Parents for record fields]
-            deriving (Eq, Data, Typeable)
+            deriving (Eq, Data)
 
 instance Outputable Parent where
    ppr NoParent        = empty
@@ -888,13 +887,13 @@ pickGREs returns two GRE
    gre1:   gre_lcl = True,  gre_imp = []
    gre2:   gre_lcl = False, gre_imp = [ imported from Bar ]
 
-Now the the "ambiguous occurrence" message can correctly report how the
+Now the "ambiguous occurrence" message can correctly report how the
 ambiguity arises.
 -}
 
 pickGREs :: RdrName -> [GlobalRdrElt] -> [GlobalRdrElt]
 -- ^ Takes a list of GREs which have the right OccName 'x'
--- Pick those GREs that are are in scope
+-- Pick those GREs that are in scope
 --    * Qualified,   as 'M.x'  if want_qual    is Qual M _
 --    * Unqualified, as 'x'    if want_unqual  is Unqual _
 --
@@ -1040,7 +1039,7 @@ There are two reasons for shadowing:
     hence the `mk_fake-imp_spec` in `shadowName`.  See also Note
     [Interactively-bound Ids in GHCi] in HscTypes
 
-  - Data types also have Extenal Names, like Ghci4.T; but we still want
+  - Data types also have External Names, like Ghci4.T; but we still want
     'T' to mean the newly-declared 'T', not an old one.
 
 * Nested Template Haskell declaration brackets
@@ -1276,3 +1275,80 @@ instance Outputable ImportSpec where
 pprLoc :: SrcSpan -> SDoc
 pprLoc (RealSrcSpan s)    = text "at" <+> ppr s
 pprLoc (UnhelpfulSpan {}) = empty
+
+-- | Display info about the treatment of '*' under NoStarIsType.
+--
+-- With StarIsType, three properties of '*' hold:
+--
+--   (a) it is not an infix operator
+--   (b) it is always in scope
+--   (c) it is a synonym for Data.Kind.Type
+--
+-- However, the user might not know that he's working on a module with
+-- NoStarIsType and write code that still assumes (a), (b), and (c), which
+-- actually do not hold in that module.
+--
+-- Violation of (a) shows up in the parser. For instance, in the following
+-- examples, we have '*' not applied to enough arguments:
+--
+--   data A :: *
+--   data F :: * -> *
+--
+-- Violation of (b) or (c) show up in the renamer and the typechecker
+-- respectively. For instance:
+--
+--   type K = Either * Bool
+--
+-- This will parse differently depending on whether StarIsType is enabled,
+-- but it will parse nonetheless. With NoStarIsType it is parsed as a type
+-- operator, thus we have ((*) Either Bool). Now there are two cases to
+-- consider:
+--
+--   1. There is no definition of (*) in scope. In this case the renamer will
+--      fail to look it up. This is a violation of assumption (b).
+--
+--   2. There is a definition of the (*) type operator in scope (for example
+--      coming from GHC.TypeNats). In this case the user will get a kind
+--      mismatch error. This is a violation of assumption (c).
+--
+-- The user might unknowingly be working on a module with NoStarIsType
+-- or use '*' as 'Data.Kind.Type' out of habit. So it is important to give a
+-- hint whenever an assumption about '*' is violated. Unfortunately, it is
+-- somewhat difficult to deal with (c), so we limit ourselves to (a) and (b).
+--
+-- 'starInfo' generates an appropriate hint to the user depending on the
+-- extensions enabled in the module and the name that triggered the error.
+-- That is, if we have NoStarIsType and the error is related to '*' or its
+-- Unicode variant, the resulting SDoc will contain a helpful suggestion.
+-- Otherwise it is empty.
+--
+starInfo :: Bool -> RdrName -> SDoc
+starInfo star_is_type rdr_name =
+  -- One might ask: if can use sdocWithDynFlags here, why bother to take
+  -- star_is_type as input? Why not refactor?
+  --
+  -- The reason is that sdocWithDynFlags would provide DynFlags that are active
+  -- in the module that tries to load the problematic definition, not
+  -- in the module that is being loaded.
+  --
+  -- So if we have 'data T :: *' in a module with NoStarIsType, then the hint
+  -- must be displayed even if we load this definition from a module (or GHCi)
+  -- with StarIsType enabled!
+  --
+  if isUnqualStar && not star_is_type
+     then text "With NoStarIsType, " <>
+          quotes (ppr rdr_name) <>
+          text " is treated as a regular type operator. "
+        $$
+          text "Did you mean to use " <> quotes (text "Type") <>
+          text " from Data.Kind instead?"
+      else empty
+  where
+    -- Does rdr_name look like the user might have meant the '*' kind by it?
+    -- We focus on unqualified stars specifically, because qualified stars are
+    -- treated as type operators even under StarIsType.
+    isUnqualStar
+      | Unqual occName <- rdr_name
+      = let fs = occNameFS occName
+        in fs == fsLit "*" || fs == fsLit "★"
+      | otherwise = False

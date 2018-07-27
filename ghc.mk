@@ -420,7 +420,7 @@ else # CLEANING
 # programs such as GHC and ghc-pkg, that we do not assume the stage0
 # compiler already has installed (or up-to-date enough).
 
-PACKAGES_STAGE0 = binary text transformers mtl parsec Cabal/Cabal hpc ghc-boot-th ghc-boot template-haskell ghci
+PACKAGES_STAGE0 = binary text transformers mtl parsec Cabal/Cabal hpc ghc-boot-th ghc-boot template-haskell ghc-heap ghci
 ifeq "$(Windows_Host)" "NO"
 PACKAGES_STAGE0 += terminfo
 endif
@@ -459,6 +459,7 @@ PACKAGES_STAGE1 += ghc-boot-th
 PACKAGES_STAGE1 += ghc-boot
 PACKAGES_STAGE1 += template-haskell
 PACKAGES_STAGE1 += ghc-compact
+PACKAGES_STAGE1 += ghc-heap
 
 ifeq "$(HADDOCK_DOCS)" "YES"
 PACKAGES_STAGE1 += xhtml
@@ -473,6 +474,7 @@ endif
 PACKAGES_STAGE1 += stm
 PACKAGES_STAGE1 += haskeline
 PACKAGES_STAGE1 += ghci
+PACKAGES_STAGE1 += libiserv
 
 # See Note [No stage2 packages when CrossCompiling or Stage1Only].
 # See Note [Stage1Only vs stage=1] in mk/config.mk.in.
@@ -480,11 +482,6 @@ ifeq "$(CrossCompiling) $(Stage1Only)" "NO NO"
 define addExtraPackage
 ifeq "$2" "-"
 # Do nothing; this package is already handled above
-else ifeq "$2" "dph"
-ifeq "$$(BUILD_DPH) $$(GhcProfiled)" "YES NO"
-# The DPH packages need TH, which is incompatible with a profiled GHC.
-PACKAGES_STAGE2 += $1
-endif
 else ifeq "$2" "extra"
 ifeq "$$(BUILD_EXTRA_PKGS)" "YES"
 PACKAGES_STAGE2 += $1
@@ -537,9 +534,9 @@ utils/ghc-pkg/dist-install/package-data.mk: $(fixed_pkg_prev)
 utils/hsc2hs/dist-install/package-data.mk: $(fixed_pkg_prev)
 utils/compare_sizes/dist-install/package-data.mk: $(fixed_pkg_prev)
 utils/runghc/dist-install/package-data.mk: $(fixed_pkg_prev)
-iserv/stage2/package-data.mk: $(fixed_pkg_prev)
-iserv/stage2_p/package-data.mk: $(fixed_pkg_prev)
-iserv/stage2_dyn/package-data.mk: $(fixed_pkg_prev)
+utils/iserv/stage2/package-data.mk: $(fixed_pkg_prev)
+utils/iserv/stage2_p/package-data.mk: $(fixed_pkg_prev)
+utils/iserv/stage2_dyn/package-data.mk: $(fixed_pkg_prev)
 ifeq "$(Windows_Host)" "YES"
 utils/gen-dll/dist-install/package-data.mk: $(fixed_pkg_prev)
 endif
@@ -619,6 +616,7 @@ libraries/ghc-prim_dist-install_EXTRA_HADDOCK_SRCS = libraries/ghc-prim/dist-ins
 ifneq "$(CLEANING)" "YES"
 ifeq "$(INTEGER_LIBRARY)" "integer-gmp"
 libraries/base_dist-install_CONFIGURE_OPTS += --flags=integer-gmp
+compiler_stage2_CONFIGURE_OPTS += --flags=integer-gmp
 else ifeq "$(INTEGER_LIBRARY)" "integer-simple"
 libraries/base_dist-install_CONFIGURE_OPTS += --flags=integer-simple
 else
@@ -661,13 +659,6 @@ ifneq "$(CLEANING)" "YES"
 BUILD_DIRS += $(patsubst %, libraries/%, $(PACKAGES_STAGE2))
 BUILD_DIRS += $(patsubst %, libraries/%, $(PACKAGES_STAGE1))
 BUILD_DIRS += $(patsubst %, libraries/%, $(filter-out $(PACKAGES_STAGE1),$(PACKAGES_STAGE0)))
-ifeq "$(BUILD_DPH)" "YES"
-# Note: `$(eval $(call foreachLibrary,addExtraPackage))` above adds the
-# packages listed in `libraries/dph/ghc-packages` (e.g. dph-base) to
-# PACKAGES_STAGE2. But not 'libraries/dph' itself (it doesn't have a cabal
-# file). Since it does have a ghc.mk file, we add it to BUILD_DIRS here.
-BUILD_DIRS += $(wildcard libraries/dph)
-endif
 endif
 
 BUILD_DIRS += libraries/integer-gmp/gmp
@@ -687,7 +678,7 @@ BUILD_DIRS += ghc
 BUILD_DIRS += docs/users_guide
 BUILD_DIRS += utils/count_lines
 BUILD_DIRS += utils/compare_sizes
-BUILD_DIRS += iserv
+BUILD_DIRS += utils/iserv
 
 # ----------------------------------------------
 # Actually include the sub-ghc.mk's
@@ -791,8 +782,7 @@ endif
 
 ifneq "$(BINDIST)" "YES"
 # Make sure we have all the GHCi libs by the time we've built
-# ghc-stage2.  DPH includes a bit of Template Haskell which needs the
-# GHCi libs, and we don't have a better way to express that dependency.
+# ghc-stage2.
 #
 GHCI_LIBS = $(foreach lib,$(PACKAGES_STAGE1),$(libraries/$(lib)_dist-install_GHCI_LIB)) \
 	    $(compiler_stage2_GHCI_LIB)
@@ -1046,6 +1036,7 @@ $(eval $(call bindist-list,.,\
     configure config.sub config.guess install-sh \
     settings.in \
     llvm-targets \
+    llvm-passes \
     packages \
     Makefile \
     mk/config.mk.in \
@@ -1072,7 +1063,7 @@ $(eval $(call bindist-list,.,\
     $(wildcard compiler/stage2/doc) \
     $(wildcard libraries/*/dist-install/doc/) \
     $(wildcard libraries/*/*/dist-install/doc/) \
-    $(filter-out settings llvm-targets,$(INSTALL_LIBS)) \
+    $(filter-out settings llvm-targets llvm-passes,$(INSTALL_LIBS)) \
     $(RTS_INSTALL_LIBS) \
     $(filter-out %/project.mk mk/config.mk %/mk/install.mk,$(MAKEFILE_LIST)) \
     mk/project.mk \
@@ -1080,10 +1071,6 @@ $(eval $(call bindist-list,.,\
     bindist.mk \
     libraries/gen_contents_index \
     libraries/prologue.txt \
-    $(wildcard libraries/dph/LICENSE \
-               libraries/dph/ghc-packages \
-               libraries/dph/ghc-packages2 \
-               libraries/dph/ghc-stage2-package) \
  ))
 endif
 # mk/project.mk gets an absolute path, so we manually include it in
@@ -1105,7 +1092,7 @@ BIN_DIST_MK = $(BIN_DIST_PREP_DIR)/bindist.mk
 unix-binary-dist-prep:
 	$(call removeTrees,bindistprep/)
 	"$(MKDIRHIER)" $(BIN_DIST_PREP_DIR)
-	set -e; for i in packages LICENSE compiler ghc iserv rts libraries utils docs libffi includes driver mk rules Makefile aclocal.m4 config.sub config.guess install-sh settings.in llvm-targets ghc.mk inplace distrib/configure.ac distrib/README distrib/INSTALL; do ln -s ../../$$i $(BIN_DIST_PREP_DIR)/; done
+	set -e; for i in packages LICENSE compiler ghc rts libraries utils docs libffi includes driver mk rules Makefile aclocal.m4 config.sub config.guess install-sh settings.in llvm-targets llvm-passes ghc.mk inplace distrib/configure.ac distrib/README distrib/INSTALL; do ln -s ../../$$i $(BIN_DIST_PREP_DIR)/; done
 	echo "HADDOCK_DOCS       = $(HADDOCK_DOCS)"       >> $(BIN_DIST_MK)
 	echo "BUILD_SPHINX_HTML  = $(BUILD_SPHINX_HTML)"  >> $(BIN_DIST_MK)
 	echo "BUILD_SPHINX_PDF   = $(BUILD_SPHINX_PDF)"   >> $(BIN_DIST_MK)
@@ -1199,11 +1186,11 @@ SRC_DIST_TESTSUITE_TARBALL        = $(SRC_DIST_ROOT)/$(SRC_DIST_TESTSUITE_NAME).
 # Files to include in source distributions
 #
 SRC_DIST_GHC_DIRS = mk rules docs distrib bindisttest libffi includes \
-    utils docs rts compiler ghc driver libraries libffi-tarballs iserv
+    utils docs rts compiler ghc driver libraries libffi-tarballs
 SRC_DIST_GHC_FILES += \
     configure.ac config.guess config.sub configure \
     aclocal.m4 README.md ANNOUNCE HACKING.md INSTALL.md LICENSE Makefile \
-    install-sh settings.in llvm-targets VERSION GIT_COMMIT_ID \
+    install-sh settings.in llvm-targets llvm-passes VERSION GIT_COMMIT_ID \
     boot packages ghc.mk MAKEHELP.md
 
 .PHONY: VERSION
@@ -1229,7 +1216,7 @@ GIT_COMMIT_ID:
 sdist-ghc-prep-tree : VERSION GIT_COMMIT_ID
 
 # Extra packages which shouldn't be in the source distribution: see #8801
-EXTRA_PACKAGES=parallel random primitive vector dph
+EXTRA_PACKAGES=parallel
 
 .PHONY: sdist-ghc-prep-tree
 sdist-ghc-prep-tree :
@@ -1449,6 +1436,16 @@ distclean : clean
 # Don't delete 'inplace' itself, it contains source files.
 	$(call removeTrees,inplace/mingw)
 	$(call removeTrees,inplace/perl)
+
+# Remove the fs utilities.
+	$(call removeFiles,utils/lndir/fs.h)
+	$(call removeFiles,utils/lndir/fs.c)
+	$(call removeFiles,utils/unlit/fs.h)
+	$(call removeFiles,utils/unlit/fs.c)
+	$(call removeFiles,rts/fs.h)
+	$(call removeFiles,rts/fs.c)
+	$(call removeFiles,libraries/base/include/fs.h)
+	$(call removeFiles,libraries/base/cbits/fs.c)
 
 maintainer-clean : distclean
 	$(call removeFiles,configure mk/config.h.in)

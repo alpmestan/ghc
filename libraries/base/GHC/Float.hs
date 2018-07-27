@@ -64,6 +64,13 @@ infixr 8  **
 ------------------------------------------------------------------------
 
 -- | Trigonometric and hyperbolic functions and related functions.
+--
+-- The Haskell Report defines no laws for 'Floating'. However, '(+)', '(*)'
+-- and 'exp' are customarily expected to define an exponential field and have
+-- the following properties:
+--
+-- * @exp (a + b)@ = @exp a * exp b
+-- * @exp (fromInteger 0)@ = @fromInteger 1@
 class  (Fractional a) => Floating a  where
     pi                  :: a
     exp, log, sqrt      :: a -> a
@@ -245,7 +252,18 @@ class  (RealFrac a, Floating a) => RealFloat a  where
 ------------------------------------------------------------------------
 
 -- | @since 2.01
-instance  Num Float  where
+-- Note that due to the presence of @NaN@, not all elements of 'Float' have an
+-- additive inverse.
+--
+-- >>> 0/0 + (negate 0/0 :: Float)
+-- NaN
+--
+-- Also note that due to the presence of -0, `Float`'s 'Num' instance doesn't
+-- have an additive identity
+--
+-- >>> 0 + (-0 :: Float)
+-- 0.0
+instance Num Float where
     (+)         x y     =  plusFloat x y
     (-)         x y     =  minusFloat x y
     negate      x       =  negateFloat x
@@ -272,6 +290,11 @@ instance  Real Float  where
                     smallInteger m# :% shiftLInteger 1 (negateInt# e#)
 
 -- | @since 2.01
+-- Note that due to the presence of @NaN@, not all elements of 'Float' have an
+-- multiplicative inverse.
+--
+-- >>> 0/0 * (recip 0/0 :: Float)
+-- NaN
 instance  Fractional Float  where
     (/) x y             =  divideFloat x y
     {-# INLINE fromRational #-}
@@ -367,7 +390,11 @@ instance  Floating Float  where
     (**) x y            =  powerFloat x y
     logBase x y         =  log y / log x
 
-    asinh x = log (x + sqrt (1.0+x*x))
+    asinh x
+      | x > huge   = log 2 + log x
+      | x < 0      = -asinh (-x)
+      | otherwise  = log (x + sqrt (1 + x*x))
+     where huge = 1e10
     acosh x = log (x + (x+1.0) * sqrt ((x-1.0)/(x+1.0)))
     atanh x = 0.5 * log ((1.0+x) / (1.0-x))
 
@@ -425,6 +452,17 @@ instance  Show Float  where
 ------------------------------------------------------------------------
 
 -- | @since 2.01
+-- Note that due to the presence of @NaN@, not all elements of 'Double' have an
+-- additive inverse.
+--
+-- >>> 0/0 + (negate 0/0 :: Double)
+-- NaN
+--
+-- Also note that due to the presence of -0, `Double`'s 'Num' instance doesn't
+-- have an additive identity
+--
+-- >>> 0 + (-0 :: Double)
+-- 0.0
 instance  Num Double  where
     (+)         x y     =  plusDouble x y
     (-)         x y     =  minusDouble x y
@@ -454,6 +492,11 @@ instance  Real Double  where
                 m :% shiftLInteger 1 (negateInt# e#)
 
 -- | @since 2.01
+-- Note that due to the presence of @NaN@, not all elements of 'Double' have an
+-- multiplicative inverse.
+--
+-- >>> 0/0 * (recip 0/0 :: Double)
+-- NaN
 instance  Fractional Double  where
     (/) x y             =  divideDouble x y
     {-# INLINE fromRational #-}
@@ -492,7 +535,11 @@ instance  Floating Double  where
     (**) x y            =  powerDouble x y
     logBase x y         =  log y / log x
 
-    asinh x = log (x + sqrt (1.0+x*x))
+    asinh x
+      | x > huge   = log 2 + log x
+      | x < 0      = -asinh (-x)
+      | otherwise  = log (x + sqrt (1 + x*x))
+     where huge = 1e20
     acosh x = log (x + (x+1.0) * sqrt ((x-1.0)/(x+1.0)))
     atanh x = 0.5 * log ((1.0+x) / (1.0-x))
 
@@ -682,6 +729,16 @@ formatRealFloatAlt fmt decs alt x
           [d]     -> d : ".0e" ++ show_e'
           (d:ds') -> d : '.' : ds' ++ "e" ++ show_e'
           []      -> errorWithoutStackTrace "formatRealFloat/doFmt/FFExponent: []"
+       Just 0 ->
+        -- handle this case specifically since we need to omit the
+        -- decimal point as well (#15115)
+        case is of
+          [0] -> "0e0"
+          _ ->
+           let
+             (ei,is') = roundTo base 1 is
+             d:_ = map intToDigit (if ei > 0 then init is' else is')
+           in d : 'e' : show (e-1+ei)
        Just dec ->
         let dec' = max dec 1 in
         case is of

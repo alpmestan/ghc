@@ -21,7 +21,7 @@ Defer01.hs:25:1: warning: [-Woverlapping-patterns (in -Wdefault)]
     Pattern match has inaccessible right hand side
     In an equation for ‘c’: c (C2 x) = ...
 
-Defer01.hs:25:4: warning: [-Wdeferred-type-errors (in -Wdefault)]
+Defer01.hs:25:4: warning: [-Winaccessible-code (in -Wdefault)]
     • Couldn't match type ‘Int’ with ‘Bool’
       Inaccessible code in
         a pattern with constructor: C2 :: Bool -> C Bool,
@@ -59,7 +59,7 @@ Defer01.hs:34:8: warning: [-Wdeferred-type-errors (in -Wdefault)]
 Defer01.hs:39:17: warning: [-Wdeferred-type-errors (in -Wdefault)]
     • Couldn't match expected type ‘Bool’ with actual type ‘T a’
     • In the first argument of ‘not’, namely ‘(K a)’
-      In the expression: (not (K a))
+      In the first argument of ‘seq’, namely ‘(not (K a))’
       In the expression: seq (not (K a)) ()
     • Relevant bindings include
         a :: a (bound at Defer01.hs:39:3)
@@ -79,6 +79,7 @@ Defer01.hs:43:10: warning: [-Wdeferred-type-errors (in -Wdefault)]
         instance Num Double -- Defined in ‘GHC.Float’
         instance Num Float -- Defined in ‘GHC.Float’
         ...plus two others
+        ...plus one instance involving out-of-scope types
         (use -fprint-potential-instances to see them all)
     • In the first argument of ‘myOp’, namely ‘23’
       In the expression: myOp 23
@@ -152,7 +153,7 @@ Defer01.hs:50:5: warning: [-Wdeferred-type-errors (in -Wdefault)]
 *** Exception: Defer01.hs:39:17: error:
     • Couldn't match expected type ‘Bool’ with actual type ‘T a’
     • In the first argument of ‘not’, namely ‘(K a)’
-      In the expression: (not (K a))
+      In the first argument of ‘seq’, namely ‘(not (K a))’
       In the expression: seq (not (K a)) ()
     • Relevant bindings include
         a :: a (bound at Defer01.hs:39:3)

@@ -78,8 +78,6 @@ module Module
         baseUnitId,
         rtsUnitId,
         thUnitId,
-        dphSeqUnitId,
-        dphParUnitId,
         mainUnitId,
         thisGhcUnitId,
         isHoleModule,
@@ -151,13 +149,10 @@ import Util
 import Data.List
 import Data.Ord
 import GHC.PackageDb (BinaryStringRep(..), DbUnitIdModuleRep(..), DbModule(..), DbUnitId(..))
+import Fingerprint
 
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Char8 as BS.Char8
-import System.IO.Unsafe
-import Foreign.Ptr (castPtr)
-import GHC.Fingerprint
 import Encoding
 
 import qualified Text.ParserCombinators.ReadP as Parse
@@ -551,7 +546,6 @@ instance Outputable ComponentId where
 data UnitId
     = IndefiniteUnitId {-# UNPACK #-} !IndefUnitId
     |   DefiniteUnitId {-# UNPACK #-} !DefUnitId
-    deriving (Typeable)
 
 unitIdFS :: UnitId -> FastString
 unitIdFS (IndefiniteUnitId x) = indefUnitIdFS x
@@ -589,7 +583,7 @@ data IndefUnitId
         -- fully instantiated (free module variables are empty)
         -- and whether or not a substitution can have any effect.
         indefUnitIdFreeHoles :: UniqDSet ModuleName
-    } deriving (Typeable)
+    }
 
 instance Eq IndefUnitId where
   u1 == u2 = indefUnitIdKey u1 == indefUnitIdKey u2
@@ -644,7 +638,7 @@ indefUnitIdToUnitId dflags iuid =
 data IndefModule = IndefModule {
         indefModuleUnitId :: IndefUnitId,
         indefModuleName   :: ModuleName
-    } deriving (Typeable, Eq, Ord)
+    } deriving (Eq, Ord)
 
 instance Outputable IndefModule where
   ppr (IndefModule uid m) =
@@ -672,7 +666,6 @@ newtype InstalledUnitId =
       -- and the hash.
       installedUnitIdFS :: FastString
     }
-   deriving (Typeable)
 
 instance Binary InstalledUnitId where
   put_ bh (InstalledUnitId fs) = put_ bh fs
@@ -763,7 +756,7 @@ installedUnitIdEq iuid uid =
 -- it only refers to a definite library; i.e., one we have generated
 -- code for.
 newtype DefUnitId = DefUnitId { unDefUnitId :: InstalledUnitId }
-    deriving (Eq, Ord, Typeable)
+    deriving (Eq, Ord)
 
 instance Outputable DefUnitId where
     ppr (DefUnitId uid) = ppr uid
@@ -848,11 +841,6 @@ rawHashUnitId sorted_holes =
         [ toStringRep m,                BS.Char8.singleton ' ',
           fastStringToByteString (unitIdFS (moduleUnitId b)), BS.Char8.singleton ':',
           toStringRep (moduleName b),   BS.Char8.singleton '\n']
-
-fingerprintByteString :: BS.ByteString -> Fingerprint
-fingerprintByteString bs = unsafePerformIO
-                         . BS.unsafeUseAsCStringLen bs
-                         $ \(p,l) -> fingerprintData (castPtr p) l
 
 fingerprintUnitId :: BS.ByteString -> Fingerprint -> BS.ByteString
 fingerprintUnitId prefix (Fingerprint a b)
@@ -1077,8 +1065,7 @@ parseModSubst = Parse.between (Parse.char '[') (Parse.char ']')
 
 integerUnitId, primUnitId,
   baseUnitId, rtsUnitId,
-  thUnitId, dphSeqUnitId, dphParUnitId,
-  mainUnitId, thisGhcUnitId, interactiveUnitId  :: UnitId
+  thUnitId, mainUnitId, thisGhcUnitId, interactiveUnitId  :: UnitId
 primUnitId        = fsToUnitId (fsLit "ghc-prim")
 integerUnitId     = fsToUnitId (fsLit n)
   where
@@ -1088,8 +1075,6 @@ integerUnitId     = fsToUnitId (fsLit n)
 baseUnitId        = fsToUnitId (fsLit "base")
 rtsUnitId         = fsToUnitId (fsLit "rts")
 thUnitId          = fsToUnitId (fsLit "template-haskell")
-dphSeqUnitId      = fsToUnitId (fsLit "dph-seq")
-dphParUnitId      = fsToUnitId (fsLit "dph-par")
 thisGhcUnitId     = fsToUnitId (fsLit "ghc")
 interactiveUnitId = fsToUnitId (fsLit "interactive")
 
@@ -1137,9 +1122,7 @@ wiredInUnitIds = [ primUnitId,
                        baseUnitId,
                        rtsUnitId,
                        thUnitId,
-                       thisGhcUnitId,
-                       dphSeqUnitId,
-                       dphParUnitId ]
+                       thisGhcUnitId ]
 
 {-
 ************************************************************************

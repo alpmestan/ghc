@@ -40,6 +40,7 @@ import Module           ( ModuleName )
 
 
 -- Various other random stuff that we need
+import GHC.HandleEncoding
 import Config
 import Constants
 import HscTypes
@@ -92,18 +93,7 @@ main = do
    hSetBuffering stdout LineBuffering
    hSetBuffering stderr LineBuffering
 
-   -- Handle GHC-specific character encoding flags, allowing us to control how
-   -- GHC produces output regardless of OS.
-   env <- getEnvironment
-   case lookup "GHC_CHARENC" env of
-    Just "UTF-8" -> do
-     hSetEncoding stdout utf8
-     hSetEncoding stderr utf8
-    _ -> do
-     -- Avoid GHC erroring out when trying to display unhandled characters
-     hSetTranslit stdout
-     hSetTranslit stderr
-
+   configureHandleEncoding
    GHC.defaultErrorHandler defaultFatalMessager defaultFlushOut $ do
     -- 1. extract the -B flag from the args
     argv0 <- getArgs
@@ -179,10 +169,16 @@ main' postLoadMode dflags0 args flagWarnings = do
       -- can be overriden from the command-line
       -- XXX: this should really be in the interactive DynFlags, but
       -- we don't set that until later in interactiveUI
-      dflags2  | DoInteractive <- postLoadMode = imp_qual_enabled
-               | DoEval _      <- postLoadMode = imp_qual_enabled
+      -- We also set -fignore-optim-changes and -fignore-hpc-changes,
+      -- which are program-level options. Again, this doesn't really
+      -- feel like the right place to handle this, but we don't have
+      -- a great story for the moment.
+      dflags2  | DoInteractive <- postLoadMode = def_ghci_flags
+               | DoEval _      <- postLoadMode = def_ghci_flags
                | otherwise                     = dflags1
-        where imp_qual_enabled = dflags1 `gopt_set` Opt_ImplicitImportQualified
+        where def_ghci_flags = dflags1 `gopt_set` Opt_ImplicitImportQualified
+                                       `gopt_set` Opt_IgnoreOptimChanges
+                                       `gopt_set` Opt_IgnoreHpcChanges
 
         -- The rest of the arguments are "dynamic"
         -- Leftover ones are presumably files

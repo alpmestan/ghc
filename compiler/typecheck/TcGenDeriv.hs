@@ -447,7 +447,7 @@ gen_Ord_binds loc tycon = do
                                  , mkHsCaseAlt nlWildPat (gtResult op) ]
       where
         tag     = get_tag data_con
-        tag_lit = noLoc (HsLit (HsIntPrim NoSourceText (toInteger tag)))
+        tag_lit = noLoc (HsLit noExt (HsIntPrim NoSourceText (toInteger tag)))
 
     mkInnerEqAlt :: OrdOp -> DataCon -> LMatch GhcPs (LHsExpr GhcPs)
     -- First argument 'a' known to be built with K
@@ -614,7 +614,8 @@ gen_Enum_binds loc tycon = do
              (nlHsApp (nlHsVar (tag2con_RDR dflags tycon))
                       (nlHsApps plus_RDR
                             [ nlHsVarApps intDataCon_RDR [ah_RDR]
-                            , nlHsLit (HsInt def (mkIntegralLit (-1 :: Int)))]))
+                            , nlHsLit (HsInt noExt
+                                                (mkIntegralLit (-1 :: Int)))]))
 
     to_enum dflags
       = mk_easy_FunBind loc toEnum_RDR [a_Pat] $
@@ -774,7 +775,7 @@ gen_Ix_binds loc tycon = do
 
     enum_index dflags
       = mk_easy_FunBind loc unsafeIndex_RDR
-                [noLoc (AsPat (noLoc c_RDR)
+                [noLoc (AsPat noExt (noLoc c_RDR)
                            (nlTuplePat [a_Pat, nlWildPat] Boxed)),
                                 d_Pat] (
            untag_Expr dflags tycon [(a_RDR, ah_RDR)] (
@@ -1080,19 +1081,23 @@ gen_Read_binds get_fixity loc tycon
         [noLoc
           (mkBindStmt
             (nlVarPat a)
-            (nlHsApps
+            (nlHsApp
               read_field
-              [ nlHsLit (mkHsString lbl_str)
-              , nlHsVarApps reset_RDR [readPrec_RDR]
-              ]
+              (nlHsVarApps reset_RDR [readPrec_RDR])
             )
           )
         ]
         where
           lbl_str = unpackFS lbl
+          mk_read_field read_field_rdr lbl
+              = nlHsApps read_field_rdr [nlHsLit (mkHsString lbl)]
           read_field
-              | isSym lbl_str = readSymField_RDR
-              | otherwise = readField_RDR
+              | isSym lbl_str
+              = mk_read_field readSymField_RDR lbl_str
+              | Just (ss, '#') <- snocView lbl_str -- #14918
+              = mk_read_field readFieldHash_RDR ss
+              | otherwise
+              = mk_read_field readField_RDR lbl_str
 
 {-
 ************************************************************************
@@ -1132,7 +1137,7 @@ gen_Show_binds get_fixity loc tycon
   = (unitBag shows_prec, emptyBag)
   where
     data_cons = tyConDataCons tycon
-    shows_prec = mkFunBindEC 1 loc showsPrec_RDR id (map pats_etc data_cons)
+    shows_prec = mkFunBindEC 2 loc showsPrec_RDR id (map pats_etc data_cons)
     comma_space = nlHsVar showCommaSpace_RDR
 
     pats_etc data_con
@@ -1142,7 +1147,7 @@ gen_Show_binds get_fixity loc tycon
       | otherwise   =
          ([a_Pat, con_pat],
           showParen_Expr (genOpApp a_Expr ge_RDR (nlHsLit
-                                 (HsInt def (mkIntegralLit con_prec_plus_one))))
+                         (HsInt noExt (mkIntegralLit con_prec_plus_one))))
                          (nlHsPar (nested_compose_Expr show_thingies)))
         where
              data_con_RDR  = getRdrName data_con
@@ -1226,7 +1231,7 @@ mk_showString_app str = nlHsApp (nlHsVar showString_RDR) (nlHsLit (mkHsString st
 -- | showsPrec :: Show a => Int -> a -> ShowS
 mk_showsPrec_app :: Integer -> LHsExpr GhcPs -> LHsExpr GhcPs
 mk_showsPrec_app p x
-  = nlHsApps showsPrec_RDR [nlHsLit (HsInt def (mkIntegralLit p)), x]
+  = nlHsApps showsPrec_RDR [nlHsLit (HsInt noExt (mkIntegralLit p)), x]
 
 -- | shows :: Show a => a -> ShowS
 mk_shows_app :: LHsExpr GhcPs -> LHsExpr GhcPs
@@ -1323,7 +1328,7 @@ gen_data dflags data_type_name constr_names loc rep_tc
     genDataTyCon :: DerivStuff
     genDataTyCon        --  $dT
       = DerivHsBind (mkHsVarBind loc data_type_name rhs,
-                     L loc (TypeSig [L loc data_type_name] sig_ty))
+                     L loc (TypeSig noExt [L loc data_type_name] sig_ty))
 
     sig_ty = mkLHsSigWcType (nlHsTyVar dataType_RDR)
     rhs    = nlHsVar mkDataType_RDR
@@ -1333,7 +1338,7 @@ gen_data dflags data_type_name constr_names loc rep_tc
     genDataDataCon :: DataCon -> RdrName -> DerivStuff
     genDataDataCon dc constr_name       --  $cT1 etc
       = DerivHsBind (mkHsVarBind loc constr_name rhs,
-                     L loc (TypeSig [L loc constr_name] sig_ty))
+                     L loc (TypeSig noExt [L loc constr_name] sig_ty))
       where
         sig_ty   = mkLHsSigWcType (nlHsTyVar constr_RDR)
         rhs      = nlHsApps mkConstr_RDR constr_args
@@ -1578,39 +1583,55 @@ mk_appE_app a b = nlHsApps appE_RDR [a, b]
 Note [Newtype-deriving instances]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 We take every method in the original instance and `coerce` it to fit
-into the derived instance. We need a type annotation on the argument
+into the derived instance. We need type applications on the argument
 to `coerce` to make it obvious what instantiation of the method we're
 coercing from.  So from, say,
+
   class C a b where
-    op :: a -> [b] -> Int
+    op :: forall c. a -> [b] -> c -> Int
 
   newtype T x = MkT <rep-ty>
 
   instance C a <rep-ty> => C a (T x) where
-    op = coerce @ (a -> [<rep-ty>] -> Int)
-                @ (a -> [T x]      -> Int)
-                op
+    op = coerce @ (a -> [<rep-ty>] -> c -> Int)
+                @ (a -> [T x]      -> c -> Int)
+                op :: forall c. a -> [T x] -> c -> Int
 
-Notice that we give the 'coerce' two explicitly-visible type arguments
-to say how it should be instantiated.  Recall
+In addition to the type applications, we also have an explicit
+type signature on the entire RHS. This brings the method-bound variable
+`c` into scope over the two type applications.
+See Note [GND and QuantifiedConstraints] for more information on why this
+is important.
 
-  coerce :: Coeercible a b => a -> b
+Giving 'coerce' two explicitly-visible type arguments grants us finer control
+over how it should be instantiated. Recall
+
+  coerce :: Coercible a b => a -> b
 
 By giving it explicit type arguments we deal with the case where
 'op' has a higher rank type, and so we must instantiate 'coerce' with
 a polytype.  E.g.
-   class C a where op :: forall b. a -> b -> b
+
+   class C a where op :: a -> forall b. b -> b
    newtype T x = MkT <rep-ty>
    instance C <rep-ty> => C (T x) where
-     op = coerce @ (forall b. <rep-ty> -> b -> b)
-                 @ (forall b. T x -> b -> b)
-                op
+     op = coerce @ (<rep-ty> -> forall b. b -> b)
+                 @ (T x      -> forall b. b -> b)
+                op :: T x -> forall b. b -> b
 
-The type checker checks this code, and it currently requires
--XImpredicativeTypes to permit that polymorphic type instantiation,
-so we have to switch that flag on locally in TcDeriv.genInst.
+The use of type applications is crucial here. If we had tried using only
+explicit type signatures, like so:
 
-See #8503 for more discussion.
+   instance C <rep-ty> => C (T x) where
+     op = coerce (op :: <rep-ty> -> forall b. b -> b)
+                     :: T x      -> forall b. b -> b
+
+Then GHC will attempt to deeply skolemize the two type signatures, which will
+wreak havoc with the Coercible solver. Therefore, we instead use type
+applications, which do not deeply skolemize and thus avoid this issue.
+The downside is that we currently require -XImpredicativeTypes to permit this
+polymorphic type instantiation, so we have to switch that flag on locally in
+TcDeriv.genInst. See #8503 for more discussion.
 
 Note [Newtype-deriving trickiness]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1631,13 +1652,98 @@ coercing opList, thus:
   instance C a => C (N a) where { op = opN }
 
   opN :: (C a, D (N a)) => N a -> N a
-  opN = coerce @(D [a]   => [a] -> [a])
-               @(D (N a) => [N a] -> [N a]
-               opList
+  opN = coerce @([a]   -> [a])
+               @([N a] -> [N a]
+               opList :: D (N a) => [N a] -> [N a]
 
 But there is no reason to suppose that (D [a]) and (D (N a))
 are inter-coercible; these instances might completely different.
 So GHC rightly rejects this code.
+
+Note [GND and QuantifiedConstraints]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Consider the following example from #15290:
+
+  class C m where
+    join :: m (m a) -> m a
+
+  newtype T m a = MkT (m a)
+
+  deriving instance
+    (C m, forall p q. Coercible p q => Coercible (m p) (m q)) =>
+    C (T m)
+
+The code that GHC used to generate for this was:
+
+  instance (C m, forall p q. Coercible p q => Coercible (m p) (m q)) =>
+      C (T m) where
+    join = coerce @(forall a.   m   (m a) ->   m a)
+                  @(forall a. T m (T m a) -> T m a)
+                  join
+
+This instantiates `coerce` at a polymorphic type, a form of impredicative
+polymorphism, so we're already on thin ice. And in fact the ice breaks,
+as we'll explain:
+
+The call to `coerce` gives rise to:
+
+  Coercible (forall a.   m   (m a) ->   m a)
+            (forall a. T m (T m a) -> T m a)
+
+And that simplified to the following implication constraint:
+
+  forall a <no-ev>. m (T m a) ~R# m (m a)
+
+But because this constraint is under a `forall`, inside a type, we have to
+prove it *without computing any term evidence* (hence the <no-ev>). Alas, we
+*must* generate a term-level evidence binding in order to instantiate the
+quantified constraint! In response, GHC currently chooses not to use such
+a quantified constraint.
+See Note [Instances in no-evidence implications] in TcInteract.
+
+But this isn't the death knell for combining QuantifiedConstraints with GND.
+On the contrary, if we generate GND bindings in a slightly different way, then
+we can avoid this situation altogether. Instead of applying `coerce` to two
+polymorphic types, we instead let an explicit type signature do the polymorphic
+instantiation, and omit the `forall`s in the type applications.
+More concretely, we generate the following code instead:
+
+  instance (C m, forall p q. Coercible p q => Coercible (m p) (m q)) =>
+      C (T m) where
+    join = coerce @(  m   (m a) ->   m a)
+                  @(T m (T m a) -> T m a)
+                  join :: forall a. T m (T m a) -> T m a
+
+Now the visible type arguments are both monotypes, so we need do any of this
+funny quantified constraint instantiation business.
+
+You might think that that second @(T m (T m a) -> T m a) argument is redundant
+in the presence of the explicit `:: forall a. T m (T m a) -> T m a` type
+signature, but in fact leaving it off will break this example (from the
+T15290d test case):
+
+  class C a where
+    c :: Int -> forall b. b -> a
+
+  instance C Int
+
+  instance C Age where
+    c = coerce @(Int -> forall b. b -> Int)
+               c :: Int -> forall b. b -> Age
+
+That is because the explicit type signature deeply skolemizes the forall-bound
+`b`, which wreaks havoc with the `Coercible` solver. An additional visible type
+argument of @(Int -> forall b. b -> Age) is enough to prevent this.
+
+Be aware that the use of an explicit type signature doesn't /solve/ this
+problem; it just makes it less likely to occur. For example, if a class has
+a truly higher-rank type like so:
+
+  class CProblem m where
+    op :: (forall b. ... (m b) ...) -> Int
+
+Then the same situation will arise again. But at least it won't arise for the
+common case of methods with ordinary, prenex-quantified types.
 -}
 
 gen_Newtype_binds :: SrcSpan
@@ -1663,13 +1769,16 @@ gen_Newtype_binds loc cls inst_tvs inst_tys rhs_ty
                                           [] rhs_expr]
       where
         Pair from_ty to_ty = mkCoerceClassMethEqn cls inst_tvs inst_tys rhs_ty meth_id
+        (_, _, from_tau) = tcSplitSigmaTy from_ty
+        (_, _, to_tau)   = tcSplitSigmaTy to_ty
 
         meth_RDR = getRdrName meth_id
 
         rhs_expr = nlHsVar (getRdrName coerceId)
-                                      `nlHsAppType` from_ty
-                                      `nlHsAppType` to_ty
-                                      `nlHsApp`     nlHsVar meth_RDR
+                                      `nlHsAppType`     from_tau
+                                      `nlHsAppType`     to_tau
+                                      `nlHsApp`         nlHsVar meth_RDR
+                                      `nlExprWithTySig` to_ty
 
     mk_atf_inst :: TyCon -> TcM FamInst
     mk_atf_inst fam_tc = do
@@ -1699,12 +1808,13 @@ gen_Newtype_binds loc cls inst_tvs inst_tys rhs_ty
         pp_lhs      = ppr (mkTyConApp fam_tc rep_lhs_tys)
 
 nlHsAppType :: LHsExpr GhcPs -> Type -> LHsExpr GhcPs
-nlHsAppType e s = noLoc (e `HsAppType` hs_ty)
+nlHsAppType e s = noLoc (HsAppType hs_ty e)
   where
-    hs_ty = mkHsWildCardBndrs $ nlHsParTy (typeToLHsType s)
+    hs_ty = mkHsWildCardBndrs $ parenthesizeHsType appPrec (typeToLHsType s)
 
 nlExprWithTySig :: LHsExpr GhcPs -> Type -> LHsExpr GhcPs
-nlExprWithTySig e s = noLoc (e `ExprWithTySig` hs_ty)
+nlExprWithTySig e s = noLoc $ ExprWithTySig hs_ty
+                            $ parenthesizeHsExpr sigPrec e
   where
     hs_ty = mkLHsSigWcType (typeToLHsType s)
 
@@ -1754,11 +1864,11 @@ genAuxBindSpec :: DynFlags -> SrcSpan -> AuxBindSpec
                   -> (LHsBind GhcPs, LSig GhcPs)
 genAuxBindSpec dflags loc (DerivCon2Tag tycon)
   = (mkFunBindSE 0 loc rdr_name eqns,
-     L loc (TypeSig [L loc rdr_name] sig_ty))
+     L loc (TypeSig noExt [L loc rdr_name] sig_ty))
   where
     rdr_name = con2tag_RDR dflags tycon
 
-    sig_ty = mkLHsSigWcType $ L loc $ HsCoreTy $
+    sig_ty = mkLHsSigWcType $ L loc $ XHsType $ NHsCoreTy $
              mkSpecSigmaTy (tyConTyVars tycon) (tyConStupidTheta tycon) $
              mkParentType tycon `mkFunTy` intPrimTy
 
@@ -1780,20 +1890,20 @@ genAuxBindSpec dflags loc (DerivTag2Con tycon)
   = (mkFunBindSE 0 loc rdr_name
         [([nlConVarPat intDataCon_RDR [a_RDR]],
            nlHsApp (nlHsVar tagToEnum_RDR) a_Expr)],
-     L loc (TypeSig [L loc rdr_name] sig_ty))
+     L loc (TypeSig noExt [L loc rdr_name] sig_ty))
   where
     sig_ty = mkLHsSigWcType $ L loc $
-             HsCoreTy $ mkSpecForAllTys (tyConTyVars tycon) $
+             XHsType $ NHsCoreTy $ mkSpecForAllTys (tyConTyVars tycon) $
              intTy `mkFunTy` mkParentType tycon
 
     rdr_name = tag2con_RDR dflags tycon
 
 genAuxBindSpec dflags loc (DerivMaxTag tycon)
   = (mkHsVarBind loc rdr_name rhs,
-     L loc (TypeSig [L loc rdr_name] sig_ty))
+     L loc (TypeSig noExt [L loc rdr_name] sig_ty))
   where
     rdr_name = maxtag_RDR dflags tycon
-    sig_ty = mkLHsSigWcType (L loc (HsCoreTy intTy))
+    sig_ty = mkLHsSigWcType (L loc (XHsType (NHsCoreTy intTy)))
     rhs = nlHsApp (nlHsVar intDataCon_RDR)
                   (nlHsLit (HsIntPrim NoSourceText max_tag))
     max_tag =  case (tyConDataCons tycon) of
@@ -1849,7 +1959,8 @@ mkFunBindSE :: Arity -> SrcSpan -> RdrName
 mkFunBindSE arity loc fun pats_and_exprs
   = mkRdrFunBindSE arity (L loc fun) matches
   where
-    matches = [mkMatch (mkPrefixFunRhs (L loc fun)) p e
+    matches = [mkMatch (mkPrefixFunRhs (L loc fun))
+                               (map (parenthesizePat appPrec) p) e
                                (noLoc emptyLocalBinds)
               | (p,e) <-pats_and_exprs]
 
@@ -1869,7 +1980,8 @@ mkFunBindEC :: Arity -> SrcSpan -> RdrName
 mkFunBindEC arity loc fun catch_all pats_and_exprs
   = mkRdrFunBindEC arity catch_all (L loc fun) matches
   where
-    matches = [ mkMatch (mkPrefixFunRhs (L loc fun)) p e
+    matches = [ mkMatch (mkPrefixFunRhs (L loc fun))
+                                (map (parenthesizePat appPrec) p) e
                                 (noLoc emptyLocalBinds)
               | (p,e) <- pats_and_exprs ]
 
@@ -2092,8 +2204,8 @@ illegal_toEnum_tag tp maxtag =
                                         (nlHsLit (mkHsString ")"))))))
 
 parenify :: LHsExpr GhcPs -> LHsExpr GhcPs
-parenify e@(L _ (HsVar _)) = e
-parenify e                 = mkHsPar e
+parenify e@(L _ (HsVar _ _)) = e
+parenify e                   = mkHsPar e
 
 -- genOpApp wraps brackets round the operator application, so that the
 -- renamer won't subsequently try to re-associate it.

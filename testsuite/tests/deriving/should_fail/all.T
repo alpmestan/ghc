@@ -69,3 +69,12 @@ test('T12512', omit_ways(['ghci']), compile_fail, [''])
 test('T12801', normal, compile_fail, [''])
 test('T14365', [extra_files(['T14365B.hs','T14365B.hs-boot'])],
                multimod_compile_fail, ['T14365A',''])
+test('T14728a', normal, compile_fail, [''])
+test('T14728b', normal, compile_fail, [''])
+test('T14916', normal, compile_fail, [''])
+test('T15073', [extra_files(['T15073a.hs'])], multimod_compile_fail,
+               ['T15073', '-v0'])
+test('deriving-via-fail', normal, compile_fail, [''])
+test('deriving-via-fail2', normal, compile_fail, [''])
+test('deriving-via-fail3', normal, compile_fail, [''])
+test('deriving-via-fail4', normal, compile_fail, [''])

@@ -319,7 +319,7 @@ extendIdSubst env@(SimplEnv {seIdSubst = subst}) var res
 
 extendTvSubst :: SimplEnv -> TyVar -> Type -> SimplEnv
 extendTvSubst env@(SimplEnv {seTvSubst = tsubst}) var res
-  = ASSERT( isTyVar var )
+  = ASSERT2( isTyVar var, ppr var $$ ppr res )
     env {seTvSubst = extendVarEnv tsubst var res}
 
 extendCvSubst :: SimplEnv -> CoVar -> Coercion -> SimplEnv
@@ -496,9 +496,9 @@ unitLetFloat bind = ASSERT(all (not . isJoinId) (bindersOf bind))
     flag (Rec {})                = FltLifted
     flag (NonRec bndr rhs)
       | not (isStrictId bndr)    = FltLifted
-      | exprIsLiteralString rhs  = FltLifted
+      | exprIsTickedString rhs   = FltLifted
           -- String literals can be floated freely.
-          -- See Note [CoreSyn top-level string ltierals] in CoreSyn.
+          -- See Note [CoreSyn top-level string literals] in CoreSyn.
       | exprOkForSpeculation rhs = FltOkSpec  -- Unlifted, and lifted but ok-for-spec (eg HNF)
       | otherwise                = ASSERT2( not (isUnliftedType (idType bndr)), ppr bndr )
                                    FltCareful

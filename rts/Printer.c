@@ -24,6 +24,8 @@
 
 #include <string.h>
 
+void findPtr(P_ p, int follow);
+
 #if defined(DEBUG)
 
 #include "Disassembler.h"
@@ -775,8 +777,6 @@ extern void DEBUG_LoadSymbols( const char *name STG_UNUSED )
 
 #endif /* USING_LIBBFD */
 
-void findPtr(P_ p, int);                /* keep gcc -Wall happy */
-
 int searched = 0;
 
 static int
@@ -876,7 +876,10 @@ void printObj( StgClosure *obj )
     debugBelch("obj 0x%p (enable -DDEBUG for more info) " , obj );
 }
 
+void findPtr(P_ p, int follow)
+{
 
+}
 #endif /* DEBUG */
 
 /* -----------------------------------------------------------------------------

@@ -876,7 +876,7 @@ void printObj( StgClosure *obj )
     debugBelch("obj 0x%p (enable -DDEBUG for more info) " , obj );
 }
 
-void findPtr(P_ p, int follow)
+void findPtr(P_, int)
 {
 
 }

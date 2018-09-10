@@ -878,7 +878,7 @@ void printObj( StgClosure *obj )
 
 void findPtr(P_, int)
 {
-
+    debugBelch("recompile your program with -debug in order to use findPtr");
 }
 #endif /* DEBUG */
 

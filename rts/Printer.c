@@ -876,9 +876,11 @@ void printObj( StgClosure *obj )
     debugBelch("obj 0x%p (enable -DDEBUG for more info) " , obj );
 }
 
-void findPtr(P_, int)
+void findPtr(P_ p, int follow)
 {
-    debugBelch("recompile your program with -debug in order to use findPtr");
+    // we're printing the arguments just to silence the unused parameter warning
+    debugBelch("recompile your program with -debug in order to run ");
+    debugBelch("findPtr(0x%p, %d)\n", p, follow);
 }
 #endif /* DEBUG */
 

@@ -159,10 +159,10 @@ endif
 
 ifeq "$(GhcDynamic)" "YES"
 RUNTEST_OPTS += -e config.ghc_dynamic=True
-CABAL_PLUGIN_BUILD = --enable-shared --disable-library-vanilla
+CABAL_PLUGIN_BUILD = --enable-shared --enable-library-vanilla --enable-library-for-ghci
 else
 RUNTEST_OPTS += -e config.ghc_dynamic=False
-CABAL_PLUGIN_BUILD = --enable-library-vanilla --disable-shared
+CABAL_PLUGIN_BUILD = --enable-library-vanilla --disable-shared --disable-library-for-ghci
 endif
 
 ifeq "$(GhcWithSMP)" "YES"

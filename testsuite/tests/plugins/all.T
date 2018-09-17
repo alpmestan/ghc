@@ -7,7 +7,7 @@ setTestOpts(req_interp)
 
 test('plugins01',
      [extra_files(['simple-plugin/']), when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins01 TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins01 TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory plugins01'])
 
 test('plugins02',
@@ -41,7 +41,7 @@ test('plugins06',
 test('plugins07',
      [extra_files(['rule-defining-plugin/']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C rule-defining-plugin package.plugins07 TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C rule-defining-plugin package.plugins07 TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory plugins07'])
 
 test('plugins08',
@@ -53,7 +53,7 @@ test('plugins08',
 test('plugins09',
      [extra_files(['simple-plugin/']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins09 TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins09 TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory plugins09'])
 
 test('plugins10',
@@ -66,49 +66,49 @@ test('plugins10',
 test('plugins11',
      [extra_files(['simple-plugin/']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins11 TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins11 TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory plugins11'])
 
 test('plugins12',
      [extra_files(['simple-plugin/']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins12 TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins12 TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory plugins12'])
 
 test('plugins13',
      [extra_files(['simple-plugin/', 'PluginFilteredExport.hs']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins13 TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins13 TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory plugins13'])
 
 test('plugins14',
      [extra_files(['simple-plugin/']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins14 TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins14 TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory plugins14'])
 
 test('plugins15',
      [extra_files(['simple-plugin/', 'MetaRemoveHelper.hs']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins15 TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.plugins15 TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory plugins15'])
 
 test('T10420',
      [extra_files(['rule-defining-plugin/']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C rule-defining-plugin package.T10420 TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C rule-defining-plugin package.T10420 TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory T10420'])
 
 test('T10294',
      [extra_files(['annotation-plugin/']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C annotation-plugin package.T10294 TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C annotation-plugin package.T10294 TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory T10294'])
 
 test('T10294a',
      [extra_files(['annotation-plugin/']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C annotation-plugin package.T10294a TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C annotation-plugin package.T10294a TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory T10294a'])
 
 test('frontend01', [extra_files(['FrontendPlugin.hs']),
@@ -124,7 +124,7 @@ test('T11244',
 test('T12567a',
      [extra_files(['T12567b.hs', 'simple-plugin/']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.T12567a TOP={top}')],
+      pre_cmd('$MAKE -s --no-print-directory -C simple-plugin package.T12567a TOP={top} GhcDynamic=YES')],
      run_command, ['$MAKE -s --no-print-directory T12567a'])
 
 test('T14335',
@@ -138,27 +138,27 @@ test('T14335',
 test('plugin-recomp-pure',
      [extra_files(['plugin-recomp/', 'plugin-recomp-test.hs']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C plugin-recomp package.plugins01 TOP={top}')
+      pre_cmd('$MAKE -s --no-print-directory -C plugin-recomp package.plugins01 TOP={top} GhcDynamic=YES')
       ],
      run_command, ['$MAKE -s --no-print-directory plugin-recomp-pure'])
 
 test('plugin-recomp-impure',
      [extra_files(['plugin-recomp/', 'plugin-recomp-test.hs']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C plugin-recomp package.plugins01 TOP={top}')
+      pre_cmd('$MAKE -s --no-print-directory -C plugin-recomp package.plugins01 TOP={top} GhcDynamic=YES')
       ],
      run_command, ['$MAKE -s --no-print-directory plugin-recomp-impure'])
 
 test('plugin-recomp-flags',
      [extra_files(['plugin-recomp/', 'plugin-recomp-test.hs']),
       when(opsys('mingw32'), multi_cpu_race),
-      pre_cmd('$MAKE -s --no-print-directory -C plugin-recomp package.plugins01 TOP={top}')
+      pre_cmd('$MAKE -s --no-print-directory -C plugin-recomp package.plugins01 TOP={top} GhcDynamic=YES')
       ],
      run_command, ['$MAKE -s --no-print-directory plugin-recomp-flags'])
 
 test('plugin-recomp-change',
      [extra_files(['plugin-recomp/', 'plugin-recomp-test.hs']),
-      pre_cmd('$MAKE -s --no-print-directory -C plugin-recomp package.plugins01 TOP={top}')
+      pre_cmd('$MAKE -s --no-print-directory -C plugin-recomp package.plugins01 TOP={top} GhcDynamic=YES')
       ],
      run_command, ['$MAKE -s --no-print-directory plugin-recomp-change'])
 

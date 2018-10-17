@@ -1007,8 +1007,8 @@ mmapForLinker (size_t bytes, uint32_t flags, int fd, int offset)
 
    IF_DEBUG(linker, debugBelch("mmapForLinker: start\n"));
    size = roundUpToPage(bytes);
+   goto mmap_again;
 
-#if defined(x86_64_HOST_ARCH)
 mmap_again:
 
    if (mmap_32bit_base != 0) {
@@ -1032,6 +1032,7 @@ mmap_again:
        return NULL;
    }
 
+#if defined(x86_64_HOST_ARCH)
    if (RtsFlags.MiscFlags.linkerAlwaysPic) {
    } else if (mmap_32bit_base != 0) {
        if (result == map_addr) {

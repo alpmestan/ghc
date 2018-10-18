@@ -898,8 +898,9 @@ compareByPreference
     -> PackageConfig
     -> PackageConfig
     -> Ordering
-compareByPreference prec_map pkg pkg' =
-    case comparing packageVersion pkg pkg' of
+compareByPreference prec_map pkg pkg'
+  | packageName pkg == packageName pkg'
+  = case comparing packageVersion pkg pkg' of
         GT -> GT
         EQ | Just prec  <- Map.lookup (unitId pkg)  prec_map
            , Just prec' <- Map.lookup (unitId pkg') prec_map
@@ -909,6 +910,12 @@ compareByPreference prec_map pkg pkg' =
            | otherwise
            -> EQ
         LT -> LT
+  | otherwise
+  = let mprec  = Map.lookup (unitId pkg)  prec_map
+        mprec' = Map.lookup (unitId pkg') prec_map
+    in case (mprec, mprec') of
+         (Just prec, Just prec') -> compare prec prec'
+         _                       -> GT
 
 comparing :: Ord a => (t -> a) -> t -> t -> Ordering
 comparing f a b = f a `compare` f b

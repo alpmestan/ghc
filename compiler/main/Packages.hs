@@ -897,7 +897,9 @@ sortByPreference prec_map = sortBy (flip (compareByPreference prec_map))
 -- is integer-gmp and the other is integer-simple.
 -- This currently only happens when we're looking up which concrete
 -- package to use in place of @integer-wired-in@ and that two different
--- package databases supply a different integer library.
+-- package databases supply a different integer library. For more about
+-- the fake @integer-wired-in@ package, see Note [The integer library]
+-- in the @PrelNames@ module.
 compareByPreference
     :: PackagePrecedenceIndex
     -> PackageConfig

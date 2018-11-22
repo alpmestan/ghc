@@ -17,6 +17,7 @@ bindistRules = do
         -- We 'need' all binaries and libraries
         targets <- mapM pkgTarget =<< stagePackages Stage1
         need targets
+
         version        <- setting ProjectVersion
         targetPlatform <- setting TargetPlatformFull
         hostOs         <- setting BuildOs
@@ -36,9 +37,16 @@ bindistRules = do
         copyDirectory (ghcBuildDir -/- "bin") bindistFilesDir
         copyDirectory (ghcBuildDir -/- "lib") bindistFilesDir
         copyDirectory (rtsIncludeDir)         bindistFilesDir
-        {- TODO: Should we ship docs?
         need ["docs"]
-        copyDirectory (root -/- "docs") bindistFilesDir -}
+        copyDirectory (root -/- "docs") bindistFilesDir
+
+        -- At this point, we know that haddock has necessarily
+        -- been built, to generate the docs. So we copy the
+        -- binary (<build root>/stage2/bin/haddock) to
+        -- the bindist's bindir
+        -- (<build root>/bindist/ghc-.../bin/).
+        haddockPath <- programPath (vanillaContext Stage2 haddock)
+        copyFile haddockPath (bindistFilesDir -/- "bin" -/- "haddock")
 
         -- We then 'need' all the files necessary to configure and install
         -- (as in, './configure [...] && make install') this build on some
@@ -88,9 +96,8 @@ bindistRules = do
     fixup f | f `elem` ["INSTALL", "README"] = "distrib" -/- f
             | otherwise                      = f
 
--- TODO: This list is surely incomplete -- fix this.
 -- | A list of files that allow us to support a simple
--- @./configure [--prefix=PATH] && make install@ workflow.
+-- @./configure [...] && make install@ workflow.
 bindistInstallFiles :: [FilePath]
 bindistInstallFiles =
     [ "config.sub", "config.guess", "install-sh", "mk" -/- "config.mk.in"
@@ -123,7 +130,7 @@ bindistMakefile = unlines
     , "\t@echo 'Run \"make install\" to install'"
     , "\t@false"
     , ""
-    , "#------------------------------------------------------------------------------"
+    , "#-----------------------------------------------------------------------"
     , "# INSTALL RULES"
     , ""
     , "# Hacky function to check equality of two strings"
@@ -139,9 +146,11 @@ bindistMakefile = unlines
     , "# $6 = Library Directory"
     , "# $7 = Docs Directory"
     , "# $8 = Includes Directory"
-    , "# We are installing wrappers to programs by searching corresponding wrappers."
+    , "# We are installing wrappers to programs by searching corresponding" ++
+      " wrappers."
     , "# If wrapper is not found, we are attaching the common wrapper to it "
-    , "# This implementation is a bit hacky and depends on consistency of program"
+    , "# This implementation is a bit hacky and depends on consistency of" ++
+      " program"
     , "# names. For hadrian build this will work as programs have a consistent "
     , "# naming procefure. This file is tested on Linux(Ubuntu)"
     , "# TODO : Check implementation in other distributions"
@@ -162,40 +171,29 @@ bindistMakefile = unlines
     , ""
     , "# QUESTION : should we use shell commands?"
     , ""
-    , "# Due to the fact that package database is configured relatively"
-    , "# We do not change the relative paths of executables and libraries"
-    , "# But instead use wrapper scripts whenever necessary"
-    , "LIBPARENT = $(shell dirname $(libdir))"
-    , "GHCBINDIR = \"$(LIBPARENT)/bin\""
     , ""
     , ".PHONY: install"
-    , "install: install_bin install_lib install_includes"
+    , "install: install_lib install_bin install_includes"
+    , "install: install_docs install_wrappers install_ghci"
     , ""
-    , "# Check if we need to install docs"
-    , "ifeq \"DOCS\" \"YES\""
-    , "install: install_docs"
-    , "endif"
-    , ""
-    , "# If the relative path of binaries and libraries are altered, we will need to"
-    , "# install additional wrapper scripts at bindir."
-    , "ifneq \"$(LIBPARENT)/bin\" \"$(bindir)\""
-    , "install: install_wrappers"
-    , "endif"
+    , "ActualBinsDir=${ghclibdir}/bin"
+    , "WrapperBinsDir=${bindir}"
     , ""
     , "# We need to install binaries relative to libraries."
     , "BINARIES = $(wildcard ./bin/*)"
     , "install_bin:"
-    , "\t@echo \"Copying Binaries to $(GHCBINDIR)\""
-    , "\t$(INSTALL_DIR) \"$(GHCBINDIR)\""
+    , "\t@echo \"Copying binaries to $(ActualBinsDir)\""
+    , "\t$(INSTALL_DIR) \"$(ActualBinsDir)\""
     , "\tfor i in $(BINARIES); do \\"
-    , "\t\tcp -R $$i \"$(GHCBINDIR)\"; \\"
+    , "\t\tcp -R $$i \"$(ActualBinsDir)\"; \\"
     , "\tdone"
+    , ""
+    , "install_ghci:"
     , "\t@echo \"Copying and installing ghci\""
-    , "\trm -f $(GHCBINDIR)/dir"
-    , "\t$(CREATE_SCRIPT) $(GHCBINDIR)/ghci"
-    , "\t@echo \"#!$(SHELL)\" >>  $(GHCBINDIR)/ghci"
-    , "\tcat wrappers/ghci-script >> $(GHCBINDIR)/ghci"
-    , "\t$(EXECUTABLE_FILE) $(GHCBINDIR)/ghci"
+    , "\t$(CREATE_SCRIPT) $(WrapperBinsDir)/ghci"
+    , "\t@echo \"#!$(SHELL)\" >>  $(WrapperBinsDir)/ghci"
+    , "\tcat wrappers/ghci-script >> $(WrapperBinsDir)/ghci"
+    , "\t$(EXECUTABLE_FILE) $(WrapperBinsDir)/ghci"
     , ""
     , "LIBRARIES = $(wildcard ./lib/*)"
     , "install_lib:"
@@ -224,12 +222,15 @@ bindistMakefile = unlines
     , "BINARY_NAMES=$(shell ls ./bin/)"
     , "install_wrappers:"
     , "\t@echo \"Installing Wrapper scripts\""
-    , "\t$(INSTALL_DIR) \"$(bindir)\""
+    , "\t$(INSTALL_DIR) \"$(WrapperBinsDir)\""
     , "\t$(foreach p, $(BINARY_NAMES),\\"
-    , "\t\t$(call installscript,$p,$(bindir)/$p,$(bindir),$(GHCBINDIR),$(GHCBINDIR)/$p,$(libdir),$(docdir),$(includedir)))"
+    , "\t\t$(call installscript,$p,$(WrapperBinsDir)/$p," ++
+      "$(WrapperBinsDir),$(ActualBinsDir),$(ActualBinsDir)/$p," ++
+      "$(libdir),$(docdir),$(includedir)))"
     , ""
     , "# END INSTALL"
-    , "# -----------------------------------------------------------------------------" ]
+    , "# ----------------------------------------------------------------------"
+    ]
 
 wrapper :: FilePath -> String
 wrapper "ghc"         = ghcWrapper

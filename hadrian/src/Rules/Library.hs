@@ -1,4 +1,4 @@
-module Rules.Library (libraryRules) where
+module Rules.Library {- (libraryRules) -} where
 
 import Data.Functor
 import Hadrian.Haskell.Cabal
@@ -251,18 +251,31 @@ parseStage = (Parsec.string "stage" *> Parsec.choice
 -- suffix out of a shared library file name).
 parseWaySuffix :: Way -> Parsec.Parsec String () Way
 parseWaySuffix w = Parsec.choice
-    [ Parsec.string "_" *> (wayFromUnits <$> Parsec.sepBy1 parseWayUnit (Parsec.string "_"))
+    [ Parsec.char '_' *>
+        (wayFromUnits <$> Parsec.sepBy1 parseWayUnit (Parsec.char '_'))
     , pure w
     ] Parsec.<?> "way suffix (e.g _thr_p, or none for vanilla)"
-  where
-    parseWayUnit = Parsec.choice
-        [ Parsec.string "thr" *> pure Threaded
-        , Parsec.char   'd'   *>
-          (Parsec.choice [ Parsec.string "ebug" *> pure Debug
-                         , Parsec.string "yn"   *> pure Dynamic ])
-        , Parsec.char 'p'     *> pure Profiling
-        , Parsec.char 'l'     *> pure Logging
-        ] Parsec.<?> "way unit (thr, debug, dyn, p, l)"
+
+-- | Same as 'parseWaySuffix', but for parsing e.g @thr_p_@
+--   instead of @_thr_p@, like 'parseWaySuffix' does.
+--
+--   This is used to parse paths to object files,
+--   in Rules.Compile.
+parseWayPrefix :: Way -> Parsec.Parsec String () Way
+parseWayPrefix w = Parsec.choice
+    [ wayFromUnits <$> Parsec.endBy1 parseWayUnit (Parsec.char '_')
+    , pure w
+    ] Parsec.<?> "way prefix (e.g thr_p_, or none for vanilla)"
+
+parseWayUnit :: Parsec.Parsec String () WayUnit
+parseWayUnit = Parsec.choice
+    [ Parsec.string "thr" *> pure Threaded
+    , Parsec.char   'd'   *>
+      (Parsec.choice [ Parsec.string "ebug" *> pure Debug
+                     , Parsec.string "yn"   *> pure Dynamic ])
+    , Parsec.char 'p'     *> pure Profiling
+    , Parsec.char 'l'     *> pure Logging
+    ] Parsec.<?> "way unit (thr, debug, dyn, p, l)"
 
 -- | Parse a @"pkgname-pkgversion"@ string into the package name and the
 -- integers that make up the package version.

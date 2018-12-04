@@ -14,7 +14,7 @@ import Utilities
 
 import qualified Text.Parsec as Parsec
 
--- * Rules for building objects
+-- * Rules for building objects and Haskell interface files
 
 compilePackage :: [(Resource, Int)] -> Rules ()
 compilePackage rs = do

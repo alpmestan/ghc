@@ -1,12 +1,12 @@
 module Rules.Compile (compilePackage) where
 
+import Hadrian.BuildPath
 import Hadrian.Oracles.TextFile
 
 import Base
 import Context
 import Expression
 import Rules.Generate
-import Rules.Library
 import Settings
 import Settings.Default
 import Target

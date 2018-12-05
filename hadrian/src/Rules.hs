@@ -94,8 +94,6 @@ packageRules = do
     let readPackageDb  = [(packageDb, 1)]
         writePackageDb = [(packageDb, maxConcurrentReaders)]
 
-    let vanillaContexts = liftM2 vanillaContext allStages knownPackages
-
     Rules.Compile.compilePackage readPackageDb
 
     Rules.Program.buildProgram readPackageDb
@@ -106,6 +104,12 @@ packageRules = do
         -- need to be set properly. @undefined@ is not an option as it ends up
         -- being forced.
         Rules.Register.registerPackage writePackageDb (Context stage dummyPackage vanilla)
+
+    -- TODO: Can we get rid of this enumeration of contexts? Since we iterate
+    --       over it to generate all 4 types of rules below, all the time, we
+    --       might want to see whether the parse-and-extract approach of
+    --       Rules.Compile and Rules.Library could save us some time there.
+    let vanillaContexts = liftM2 vanillaContext allStages knownPackages
 
     forM_ vanillaContexts $ mconcat
         [ Rules.Register.configurePackage

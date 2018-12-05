@@ -9,19 +9,19 @@ import qualified Text.Parsec as Parsec
 --
 -- > <build root>/stage<N>/<path/to/pkg/from/ghc/root>/build/<something>
 --
--- where @something@ describes a library to be build for the given package.
+-- where @something@ describes a library or object file or ... to be built
+-- for the given package.
 --
--- @a@, which represents that @something@, is instantiated as 'LibA', 'LibDyn'
--- and 'LibGhci' successively in this module, depending on the type of library
--- we're giving the build rules for.
+-- @a@, which represents that @something@, is instantiated with library-related
+-- data types in @Rules.Library@ and with object/interface files related types in
+-- @Rules.Compile@.
 data BuildPath a = BuildPath FilePath -- ^ > <build root>/
                              Stage    -- ^ > stage<N>/
                              FilePath -- ^ > <path/to/pkg/from/ghc/root>/build/
                              a        -- ^ > whatever comes after 'build/'
     deriving (Eq, Show)
 
--- | Parse a build path for a library to be built under the given build root,
--- where the filename will be parsed with the given parser argument.
+-- | Parse a build path under the given build root.
 parseBuildPath
     :: FilePath -- ^ build root
     -> Parsec.Parsec String () a -- ^ what to parse after @build/@
@@ -117,6 +117,6 @@ parsePath
     -> FilePath                  -- ^ path to parse
     -> Action a
 parsePath p inp path = case Parsec.parse p inp path of
-    Left err -> fail $ "Rules.Library.parsePath: path="
+    Left err -> fail $ "Hadrian.BuildPath.parsePath: path="
                     ++ path ++ ", error:\n" ++ show err
     Right a  -> pure a

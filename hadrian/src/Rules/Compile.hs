@@ -46,6 +46,32 @@ compilePackage rs = do
 
 -- * Object file paths types and parsers
 
+{- We are using a non uniform representation that separates
+   object files produced from Haskell code and from other
+   languages, because the two "groups" have to be parsed
+   differently enough that this would complicated the parser
+   significantly.
+
+   Indeed, non-Haskell files can only produce .o (or .thr_o, ...)
+   files while Haskell modules can produce those as well as
+   interface files, both in -boot or non-boot variants.
+
+   Moreover, non-Haskell object files live under:
+     <root>/stage<N>/<path/to/pkg>/build/{c,cmm,s}/
+
+   while Haskell object/interface files live under:
+     <root>/stage<N>/<path/to/pkg>/build/
+
+   So the kind of object is partially determined by
+   whether we're in c/, cmm/ or s/ but also by the
+   object file's extension, in the case of a Haskell file.
+   This could have been addressed with some knot-tying but
+   Parsec's monad doesn't give us a MonadFix instance.
+
+   We therefore stick to treating those two type of object
+   files non uniformly.
+-}
+
 -- | Non Haskell source languages that we compile to get object files.
 data SourceLang = Asm | C | Cmm
   deriving (Eq, Show)

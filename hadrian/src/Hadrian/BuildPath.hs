@@ -13,8 +13,8 @@ import qualified Text.Parsec as Parsec
 -- for the given package.
 --
 -- @a@, which represents that @something@, is instantiated with library-related
--- data types in @Rules.Library@ and with object/interface files related types in
--- @Rules.Compile@.
+-- data types in @Rules.Library@ and with object/interface files related types
+-- in @Rules.Compile@.
 data BuildPath a = BuildPath FilePath -- ^ > <build root>/
                              Stage    -- ^ > stage<N>/
                              FilePath -- ^ > <path/to/pkg/from/ghc/root>/build/

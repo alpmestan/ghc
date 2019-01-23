@@ -1148,8 +1148,9 @@ hsTyClForeignBinders tycl_decls foreign_decls
     getSelectorNames (ns, fs) = map unLoc ns ++ map (extFieldOcc . unLoc) fs
 
 -------------------
-hsLTyClDeclBinders :: Located (TyClDecl pass)
-                   -> ([Located (IdP pass)], [LFieldOcc pass])
+hsLTyClDeclBinders
+  :: RdrOrSeName pass ~ RdrName
+  => Located (TyClDecl pass) -> ([Located (IdP pass)], [LFieldOcc pass])
 -- ^ Returns all the /binding/ names of the decl.  The first one is
 -- guaranteed to be the name of the decl. The first component
 -- represents all binding names except record fields; the second
@@ -1215,8 +1216,10 @@ getPatSynBinds binds
           , (dL->L _ (PatSynBind _ psb)) <- bagToList lbinds ]
 
 -------------------
-hsLInstDeclBinders :: LInstDecl (GhcPass p)
-                   -> ([Located (IdP (GhcPass p))], [LFieldOcc (GhcPass p)])
+hsLInstDeclBinders
+  :: RdrOrSeName (GhcPass p) ~ RdrName
+  => LInstDecl (GhcPass p)
+  -> ([Located (IdP (GhcPass p))], [LFieldOcc (GhcPass p)])
 hsLInstDeclBinders (dL->L _ (ClsInstD
                              { cid_inst = ClsInstDecl
                                           { cid_datafam_insts = dfis }}))
@@ -1233,8 +1236,9 @@ hsLInstDeclBinders _ = panic "hsLInstDeclBinders: Impossible Match"
 
 -------------------
 -- the SrcLoc returned are for the whole declarations, not just the names
-hsDataFamInstBinders :: DataFamInstDecl pass
-                     -> ([Located (IdP pass)], [LFieldOcc pass])
+hsDataFamInstBinders
+  :: RdrOrSeName pass ~ RdrName
+  => DataFamInstDecl pass -> ([Located (IdP pass)], [LFieldOcc pass])
 hsDataFamInstBinders (DataFamInstDecl { dfid_eqn = HsIB { hsib_body =
                        FamEqn { feqn_rhs = defn }}})
   = hsDataDefnBinders defn
@@ -1247,7 +1251,9 @@ hsDataFamInstBinders (DataFamInstDecl (XHsImplicitBndrs _))
 
 -------------------
 -- the SrcLoc returned are for the whole declarations, not just the names
-hsDataDefnBinders :: HsDataDefn pass -> ([Located (IdP pass)], [LFieldOcc pass])
+hsDataDefnBinders
+  :: RdrOrSeName pass ~ RdrName
+  => HsDataDefn pass -> ([Located (IdP pass)], [LFieldOcc pass])
 hsDataDefnBinders (HsDataDefn { dd_cons = cons })
   = hsConDeclsBinders cons
   -- See Note [Binders in family instances]
@@ -1257,7 +1263,9 @@ hsDataDefnBinders (XHsDataDefn _) = panic "hsDataDefnBinders"
 type Seen pass = [LFieldOcc pass] -> [LFieldOcc pass]
                  -- Filters out ones that have already been seen
 
-hsConDeclsBinders :: [LConDecl pass] -> ([Located (IdP pass)], [LFieldOcc pass])
+hsConDeclsBinders
+  :: forall pass. RdrOrSeName pass ~ RdrName
+  => [LConDecl pass] -> ([Located (IdP pass)], [LFieldOcc pass])
    -- See hsLTyClDeclBinders for what this does
    -- The function is boringly complicated because of the records
    -- And since we only have equality, we have to be a little careful

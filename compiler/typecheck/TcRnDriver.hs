@@ -48,7 +48,7 @@ module TcRnDriver (
 
 import GhcPrelude
 
-import {-# SOURCE #-} TcSplice ( finishTH, runRemoteModFinalizers )
+import {-# SOURCE #-} TcSplice( finishTH, runRemoteModFinalizers )
 import RnSplice ( rnTopSpliceDecls, traceSplice, SpliceInfo(..) )
 import IfaceEnv( externaliseName )
 import TcHsType
@@ -420,7 +420,6 @@ tcRnSrcDecls explicit_mod_hdr decls
 
         -- Emit Typeable bindings
       ; tcg_env <- mkTypeableBinds
-
 
       ; traceTc "Tc9" empty
 
